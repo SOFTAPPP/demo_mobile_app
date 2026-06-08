@@ -25,9 +25,9 @@ export default function Dashboard() {
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
 
-  // Update current time every minute to auto-enable start buttons
+  // Update current time every second to auto-enable start buttons and power the live clock
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(Date.now()), 60000);
+    const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -280,12 +280,32 @@ export default function Dashboard() {
       {/* Main Content */}
       <main className="dashboard__main">
         {/* Header Greeting */}
-        <header className="dashboard__header">
-          <h1 className="dashboard__greeting">
-            {getGreeting()},{' '}
-            <span className="dashboard__greeting-accent">{user?.name?.split(' ')[0]}</span> 🎶
-          </h1>
-          <p className="dashboard__date">{getDate()}</p>
+        <header className="dashboard__header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1 className="dashboard__greeting">
+              {getGreeting()},{' '}
+              <span className="dashboard__greeting-accent">{user?.name?.split(' ')[0]}</span> 🎶
+            </h1>
+            <p className="dashboard__date">{getDate()}</p>
+          </div>
+          
+          <div className="dashboard__live-clock" style={{
+            fontSize: '1.8rem',
+            fontFamily: 'var(--font-mono)',
+            fontWeight: 700,
+            color: 'var(--color-primary-700)',
+            background: 'var(--color-surface)',
+            padding: '12px 24px',
+            borderRadius: 'var(--radius-xl)',
+            boxShadow: 'var(--shadow-md)',
+            border: '1px solid var(--color-border-light)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px'
+          }}>
+            <span style={{ fontSize: '1.2rem', animation: 'pulse 2s infinite' }}>🔴</span>
+            {new Date(currentTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          </div>
         </header>
 
         {/* Quick Actions */}
@@ -366,9 +386,12 @@ export default function Dashboard() {
                   <button
                     className="btn-modal-primary"
                     style={{ 
-                      padding: '6px 12px', 
-                      fontSize: '12px', 
+                      padding: '8px 20px', 
+                      fontSize: '13px', 
                       marginLeft: 'auto',
+                      flex: '0 0 auto',
+                      width: 'auto',
+                      minWidth: '120px',
                       opacity: new Date(meeting.scheduled_for!).getTime() <= currentTime ? 1 : 0.5,
                       cursor: new Date(meeting.scheduled_for!).getTime() <= currentTime ? 'pointer' : 'not-allowed'
                     }}
@@ -376,7 +399,7 @@ export default function Dashboard() {
                     disabled={new Date(meeting.scheduled_for!).getTime() > currentTime}
                     title={new Date(meeting.scheduled_for!).getTime() > currentTime ? "You can start the class once the scheduled time arrives" : ""}
                   >
-                    Start Class
+                    ▶ Start Class
                   </button>
                   <button 
                     onClick={(e) => { e.stopPropagation(); handleDeleteMeeting(meeting.id); }}
