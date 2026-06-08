@@ -290,20 +290,30 @@ export default function Dashboard() {
           </div>
           
           <div className="dashboard__live-clock" style={{
-            fontSize: '1.8rem',
-            fontFamily: 'var(--font-mono)',
-            fontWeight: 700,
-            color: 'var(--color-primary-700)',
-            background: 'var(--color-surface)',
-            padding: '12px 24px',
-            borderRadius: 'var(--radius-xl)',
-            boxShadow: 'var(--shadow-md)',
-            border: '1px solid var(--color-border-light)',
+            fontSize: '1.1rem',
+            fontFamily: 'var(--font-heading)',
+            fontWeight: 600,
+            color: 'var(--color-text-primary)',
+            background: 'rgba(255, 255, 255, 0.8)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            padding: '8px 24px',
+            borderRadius: '100px',
+            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.03)',
+            border: '1px solid rgba(255, 255, 255, 0.6)',
             display: 'flex',
             alignItems: 'center',
-            gap: '10px'
+            gap: '12px',
+            letterSpacing: '1px'
           }}>
-            <span style={{ fontSize: '1.2rem', animation: 'pulse 2s infinite' }}>🔴</span>
+            <span style={{ 
+              width: '8px', 
+              height: '8px', 
+              borderRadius: '50%', 
+              backgroundColor: '#E53E3E', 
+              boxShadow: '0 0 8px rgba(229, 62, 62, 0.5)',
+              animation: 'pulse 2s infinite' 
+            }}></span>
             {new Date(currentTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
           </div>
         </header>
