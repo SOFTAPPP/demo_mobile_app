@@ -1,0 +1,84 @@
+import { AccessToken } from 'livekit-server-sdk';
+import { v4 as uuidv4 } from 'uuid';
+import { config } from '../config';
+
+export const livekitService = {
+  /**
+   * Generate a LiveKit access token for a participant to join a room.
+   * This token is what the client uses to connect to the LiveKit SFU.
+   */
+  async generateToken(
+    roomName: string,
+    participantName: string,
+    participantId: string,
+    isTeacher: boolean = false
+  ): Promise<string> {
+    if (!this.isConfigured()) {
+      // Demo mode — return a placeholder token
+      // In production, LiveKit credentials are required
+      console.warn('⚠️  LiveKit credentials not configured. Running in demo mode.');
+      return 'demo-token-' + participantId;
+    }
+
+    // Append a unique UUID to prevent identity collisions if a user joins from multiple tabs
+    const uniqueIdentity = `${participantId}-${uuidv4().substring(0, 8)}`;
+
+    const token = new AccessToken(config.livekit.apiKey, config.livekit.apiSecret, {
+      identity: uniqueIdentity,
+      name: participantName,
+      // Token expires in 6 hours (one class session)
+      ttl: '6h',
+      metadata: JSON.stringify({
+        role: isTeacher ? 'teacher' : 'student',
+        name: participantName,
+      }),
+    });
+
+    // Grant room-level permissions
+    token.addGrant({
+      room: roomName,
+      roomJoin: true,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: isTeacher, // Only teacher can broadcast data messages
+    });
+
+    return await token.toJwt();
+  },
+
+  /**
+   * Get the LiveKit WebSocket URL for the client to connect to
+   */
+  getServerUrl(): string {
+    return config.livekit.url;
+  },
+
+  isConfigured(): boolean {
+    const { apiKey, apiSecret, url } = config.livekit;
+    return !!(
+      apiKey && apiKey !== 'your_api_key_here' &&
+      apiSecret && apiSecret !== 'your_api_secret_here' &&
+      url && url !== 'wss://your-project.livekit.cloud'
+    );
+  },
+
+  /**
+   * Forcefully ends a LiveKit room, kicking out all participants
+   */
+  async endRoom(roomName: string): Promise<void> {
+    if (!this.isConfigured()) return;
+    
+    const { apiKey, apiSecret, url } = config.livekit;
+    // RoomServiceClient requires http/https URL, not ws/wss
+    const httpUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
+    
+    try {
+      const { RoomServiceClient } = await import('livekit-server-sdk');
+      const roomService = new RoomServiceClient(httpUrl, apiKey, apiSecret);
+      await roomService.deleteRoom(roomName);
+      console.log(`🧹 Cleaned up LiveKit room: ${roomName}`);
+    } catch (error) {
+      console.error(`Failed to delete LiveKit room ${roomName}:`, error);
+    }
+  }
+};

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <circle cx="32" cy="32" r="30" fill="#4A1A2E"/>
+  <circle cx="32" cy="32" r="28" stroke="#D4722A" stroke-width="2"/>
+  <text x="32" y="28" text-anchor="middle" fill="#F5F0E8" font-family="serif" font-size="14" font-weight="bold">🎵</text>
+  <text x="32" y="44" text-anchor="middle" fill="#D4722A" font-family="serif" font-size="10" font-weight="bold">SA</text>
+</svg>

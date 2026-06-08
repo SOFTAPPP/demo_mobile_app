@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SangeetArghya</string>
+    <string name="title_activity_main">SangeetArghya</string>
+    <string name="package_name">com.nada.upasana</string>
+    <string name="custom_url_scheme">com.nada.upasana</string>
+</resources>

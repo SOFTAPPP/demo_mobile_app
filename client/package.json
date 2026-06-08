@@ -1,0 +1,32 @@
+{
+  "name": "sangeet-arghya-client",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "build:mobile": "vite build && npx cap sync",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/core": "^8.4.0",
+    "@livekit/components-react": "^2.9.4",
+    "@livekit/components-styles": "^1.1.4",
+    "axios": "^1.7.9",
+    "livekit-client": "^2.9.5",
+    "lucide-react": "^1.17.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.7.0",
+    "vite": "^6.1.0"
+  }
+}
