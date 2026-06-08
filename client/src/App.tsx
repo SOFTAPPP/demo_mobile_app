@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import Meeting from './pages/Meeting';
+import MeetingEnded from './pages/MeetingEnded';
 import './styles/index.css';
 
 // Protected route wrapper
@@ -81,6 +82,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Meeting />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/meeting-ended"
+        element={
+          <ProtectedRoute>
+            <MeetingEnded />
           </ProtectedRoute>
         }
       />

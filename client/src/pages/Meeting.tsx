@@ -13,6 +13,7 @@ import {
 import { Track, RoomOptions, VideoPresets, RoomEvent } from 'livekit-client';
 import { useAuth } from '../context/AuthContext';
 import { Mic, MicOff, Video as VideoIcon, VideoOff, Users, PhoneOff, LogOut, Signal, SignalHigh, SignalLow, SignalMedium, Palette } from 'lucide-react';
+import { io as socketIO } from 'socket.io-client';
 import api from '../services/api';
 import '../styles/meeting.css';
 
@@ -87,6 +88,27 @@ export default function Meeting() {
   const [theme, setTheme] = useState<'light' | 'maroon'>('light');
   const [isHost, setIsHost] = useState(!!location.state?.isHost);
 
+  // Socket.io for instant teardown
+  useEffect(() => {
+    if (!roomCode) return;
+    
+    // Connect to the backend root (which proxies via Vite or connects directly)
+    const socketUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : '/';
+    const socket = socketIO(socketUrl);
+    
+    socket.emit('join-room', roomCode);
+
+    socket.on('meeting-ended', () => {
+      console.log(`[⏱️ Profiling] Socket.io INSTANT Teardown Received`);
+      socket.disconnect();
+      navigate('/meeting-ended', { state: { roomCode } });
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [roomCode, navigate]);
+
   useEffect(() => {
     if (!location.state?.livekit && roomCode) {
       fetchMeetingToken(roomCode);
@@ -151,7 +173,7 @@ export default function Meeting() {
           audio={false}
           onDisconnected={() => {
             console.log('Disconnected from room');
-            navigate('/dashboard');
+            // Do not force navigate here; allow socket or manual leave to handle it
           }}
           onError={(err) => {
             console.error('LiveKit Error:', err);
@@ -173,11 +195,12 @@ export default function Meeting() {
               if (isHost) {
                 try {
                   await api.post('/meetings/end', { roomCode });
+                  // Navigate host to the meeting-ended page directly
+                  navigate('/meeting-ended', { state: { roomCode } });
                 } catch (e) {
                   console.error('Failed to end meeting', e);
                 }
               }
-              navigate('/dashboard');
             }}
             connectionError={connectionError}
             clearConnectionError={() => setConnectionError('')}

@@ -137,7 +137,7 @@ router.post('/join', async (req: AuthRequest, res: Response): Promise<void> => {
  * POST /api/meetings/end
  * Teacher ends a meeting
  */
-router.post('/end', (req: AuthRequest, res: Response): void => {
+router.post('/end', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { roomCode } = req.body;
     if (!roomCode) {
@@ -159,6 +159,10 @@ router.post('/end', (req: AuthRequest, res: Response): void => {
 
     meetingQueries.endMeeting.run(cleanRoomCode);
     
+    // Broadcast instantly to all participants via Socket.io for 0-latency teardown
+    const { io } = await import('../index');
+    io.to(cleanRoomCode).emit('meeting-ended');
+
     // Asynchronously tell LiveKit to kick everyone out and delete the room
     livekitService.endRoom(cleanRoomCode);
     
