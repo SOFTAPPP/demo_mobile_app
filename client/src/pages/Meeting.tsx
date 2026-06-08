@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import {
   LiveKitRoom,
@@ -78,6 +78,9 @@ export default function Meeting() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
+  
+  const isLeavingManually = useRef(false);
+  const hasConnected = useRef(false);
 
   const [livekitToken, setLivekitToken] = useState<string>(location.state?.livekit?.token || '');
   const [livekitUrl, setLivekitUrl] = useState<string>(location.state?.livekit?.url || '');
@@ -171,9 +174,14 @@ export default function Meeting() {
           options={roomOptions}
           video={false}
           audio={false}
+          onConnected={() => {
+            hasConnected.current = true;
+          }}
           onDisconnected={() => {
             console.log('Disconnected from room');
-            // Do not force navigate here; allow socket or manual leave to handle it
+            // We removed the fallback to /meeting-ended here because it was aggressively kicking
+            // users out during minor network blips or browser hot-reloads.
+            // Teardown navigation is now handled 100% reliably by Socket.io.
           }}
           onError={(err) => {
             console.error('LiveKit Error:', err);
@@ -189,6 +197,7 @@ export default function Meeting() {
             meetingTitle={meetingTitle} 
             isHost={isHost}
             onLeave={async () => {
+              isLeavingManually.current = true;
               navigate('/dashboard');
             }} 
             onEnd={async () => {
@@ -247,9 +256,69 @@ function BrandedMeetingUI({
   const [showParticipants, setShowParticipants] = useState(false);
   const [musicMode, setMusicMode] = useState(false);
 
-  // Optimistic UI States for instant feedback
+  // Synthesize a nice chime without needing any audio files
+  const playTone = useCallback((type: 'join' | 'leave') => {
+    try {
+      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContext) return;
+      const ctx = new AudioContext();
+      
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+
+      osc.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      if (type === 'join') {
+        // Happy rising tone
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
+        osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.1); // E5
+        gainNode.gain.setValueAtTime(0, ctx.currentTime);
+        gainNode.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.05);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+      } else {
+        // Soft falling tone
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
+        osc.frequency.exponentialRampToValueAtTime(523.25, ctx.currentTime + 0.1); // C5
+        gainNode.gain.setValueAtTime(0, ctx.currentTime);
+        gainNode.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.05);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+      }
+
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.5);
+    } catch (e) {
+      console.log('Audio playback skipped', e);
+    }
+  }, []);
+
+  // Listen for participant enter/leave to play the sound
+  useEffect(() => {
+    if (!room) return;
+    
+    const onParticipantConnected = () => playTone('join');
+    const onParticipantDisconnected = () => playTone('leave');
+
+    room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
+    room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+
+    return () => {
+      room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
+      room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+    };
+  }, [room, playTone]);
+
   const [optimisticMic, setOptimisticMic] = useState<boolean | null>(null);
   const [optimisticCam, setOptimisticCam] = useState<boolean | null>(null);
+  
+  // Confirmation Modal State
+  const [confirmAction, setConfirmAction] = useState<'leave' | 'end' | null>(null);
 
   const displayMic = optimisticMic !== null ? optimisticMic : isMicrophoneEnabled;
   const displayCam = optimisticCam !== null ? optimisticCam : isCameraEnabled;
@@ -496,29 +565,73 @@ function BrandedMeetingUI({
 
           <button
             className="control-btn control-btn--default"
-            onClick={() => {
-              room.disconnect();
-              onLeave();
-            }}
+            onClick={() => setConfirmAction('leave')}
           >
             <LogOut size={22} />
             <span className="control-btn__tooltip">Leave</span>
           </button>
 
-          {isHost && onEnd && (
-            <button
-              className="control-btn control-btn--end"
-              onClick={() => {
-                room.disconnect();
-                onEnd();
-              }}
-            >
-              <PhoneOff size={22} />
-              <span className="control-btn__tooltip">End for All</span>
-            </button>
+          {isHost && (
+            <div className="host-controls">
+              <button className="control-btn control-btn--end" onClick={() => setConfirmAction('end')}>
+                <PhoneOff size={22} />
+                <span className="control-btn__tooltip">End for All</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
+
+      {/* Custom Confirmation Modal */}
+      {confirmAction && (
+        <div className="modal-overlay" style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+          backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', 
+          alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+          backdropFilter: 'blur(4px)'
+        }}>
+          <div className="modal-content" style={{
+            background: 'white', padding: '24px', borderRadius: '16px',
+            maxWidth: '320px', width: '90%', textAlign: 'center',
+            boxShadow: '0 10px 40px rgba(0,0,0,0.2)', color: '#111827'
+          }}>
+            <h3 style={{ fontSize: '1.2rem', marginBottom: '8px' }}>
+              {confirmAction === 'end' ? 'End Meeting for All?' : 'Leave Meeting?'}
+            </h3>
+            <p style={{ color: '#4B5563', marginBottom: '24px', fontSize: '0.95rem', lineHeight: 1.4 }}>
+              {confirmAction === 'end' 
+                ? 'Are you sure you want to completely end this meeting and disconnect all participants?' 
+                : 'Are you sure you want to leave this meeting? You can rejoin later.'}
+            </p>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button 
+                onClick={() => setConfirmAction(null)}
+                style={{ flex: 1, padding: '10px', background: '#F3F4F6', color: '#374151', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}
+                onMouseOver={(e) => e.currentTarget.style.background = '#E5E7EB'}
+                onMouseOut={(e) => e.currentTarget.style.background = '#F3F4F6'}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => {
+                  if (confirmAction === 'end') {
+                    if (onEnd) onEnd();
+                  } else {
+                    room.disconnect();
+                    onLeave();
+                  }
+                  setConfirmAction(null);
+                }}
+                style={{ flex: 1, padding: '10px', background: '#DC2626', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}
+                onMouseOver={(e) => e.currentTarget.style.background = '#B91C1C'}
+                onMouseOut={(e) => e.currentTarget.style.background = '#DC2626'}
+              >
+                {confirmAction === 'end' ? 'End Call' : 'Leave'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

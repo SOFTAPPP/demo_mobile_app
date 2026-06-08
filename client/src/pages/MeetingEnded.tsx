@@ -43,7 +43,9 @@ export default function MeetingEnded() {
 
         <button 
           onClick={() => navigate('/dashboard')}
-          style={{ width: '100%', padding: '14px', background: 'var(--m-primary)', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'all 0.2s' }}
+          style={{ width: '100%', padding: '14px', background: '#DC2626', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'background 0.2s' }}
+          onMouseOver={(e) => e.currentTarget.style.background = '#B91C1C'}
+          onMouseOut={(e) => e.currentTarget.style.background = '#DC2626'}
         >
           <Home size={18} />
           Return to Dashboard Now
