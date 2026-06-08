@@ -40,9 +40,17 @@ db.exec(`
     is_active INTEGER DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now')),
     ended_at TEXT,
+    scheduled_for TEXT,
     FOREIGN KEY (host_id) REFERENCES users(id)
   )
 `);
+
+// Simple migration to add scheduled_for if the table already existed
+try {
+  db.exec(`ALTER TABLE meetings ADD COLUMN scheduled_for TEXT;`);
+} catch (e) {
+  // Column already exists, ignore
+}
 
 // Create meeting participants table
 db.exec(`
@@ -75,6 +83,7 @@ export interface Meeting {
   is_active: number;
   created_at: string;
   ended_at: string | null;
+  scheduled_for: string | null;
 }
 
 // User queries
@@ -94,18 +103,28 @@ export const meetingQueries: Record<string, Statement> = {
     INSERT INTO meetings (id, room_code, title, host_id, max_participants)
     VALUES (?, ?, ?, ?, ?)
   `),
+  schedule: db.prepare(`
+    INSERT INTO meetings (id, room_code, title, host_id, max_participants, scheduled_for)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `),
   findByCode: db.prepare(`SELECT * FROM meetings WHERE room_code = ?`),
   findById: db.prepare(`SELECT * FROM meetings WHERE id = ?`),
-  getActiveByHost: db.prepare(`SELECT * FROM meetings WHERE host_id = ? AND is_active = 1`),
+  getActiveByHost: db.prepare(`SELECT * FROM meetings WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NULL`),
   getRecent: db.prepare(`
     SELECT DISTINCT m.* FROM meetings m
     LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id
-    WHERE m.host_id = ? OR mp.user_id = ?
+    WHERE (m.host_id = ? AND (m.scheduled_for IS NULL OR m.is_active = 0)) 
+       OR (mp.user_id = ?)
     ORDER BY m.created_at DESC
     LIMIT 10
   `),
+  getScheduled: db.prepare(`
+    SELECT * FROM meetings 
+    WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NOT NULL 
+    ORDER BY scheduled_for ASC
+  `),
   endMeeting: db.prepare(`UPDATE meetings SET is_active = 0, ended_at = datetime('now') WHERE room_code = ?`),
-  getActive: db.prepare(`SELECT * FROM meetings WHERE is_active = 1`),
+  getActive: db.prepare(`SELECT * FROM meetings WHERE is_active = 1 AND scheduled_for IS NULL`),
   deleteMeeting: db.prepare(`DELETE FROM meetings WHERE id = ? AND host_id = ?`),
 };
 

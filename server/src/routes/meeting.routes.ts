@@ -69,6 +69,48 @@ router.post('/create', async (req: AuthRequest, res: Response): Promise<void> =>
 });
 
 /**
+ * POST /api/meetings/schedule
+ * Teacher schedules a new meeting room for a future date
+ */
+router.post('/schedule', async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { title, scheduledFor } = req.body;
+    const meetingTitle = title || 'Scheduled Music Class';
+    
+    if (!scheduledFor) {
+      res.status(400).json({ error: 'scheduledFor date is required' });
+      return;
+    }
+
+    const meetingId = uuidv4();
+    let roomCode = generateRoomCode();
+
+    // Ensure unique room code
+    let existing = meetingQueries.findByCode.get(roomCode);
+    while (existing) {
+      roomCode = generateRoomCode();
+      existing = meetingQueries.findByCode.get(roomCode);
+    }
+
+    // Insert scheduled meeting into the database
+    meetingQueries.schedule.run(meetingId, roomCode, meetingTitle, req.user!.userId, 100, scheduledFor);
+
+    res.status(201).json({
+      meeting: {
+        id: meetingId,
+        room_code: roomCode,
+        title: meetingTitle,
+        is_active: true,
+        scheduled_for: scheduledFor
+      }
+    });
+  } catch (error) {
+    console.error('Schedule meeting error:', error);
+    res.status(500).json({ error: 'Failed to schedule meeting' });
+  }
+});
+
+/**
  * POST /api/meetings/join
  * Student joins an existing meeting
  */
@@ -184,6 +226,20 @@ router.get('/recent', (req: AuthRequest, res: Response): void => {
   } catch (error) {
     console.error('Get recent meetings error:', error);
     res.status(500).json({ error: 'Failed to get meetings' });
+  }
+});
+
+/**
+ * GET /api/meetings/scheduled
+ * Get scheduled meetings for the current user
+ */
+router.get('/scheduled', (req: AuthRequest, res: Response): void => {
+  try {
+    const meetings = meetingQueries.getScheduled.all(req.user!.userId);
+    res.json({ meetings });
+  } catch (error) {
+    console.error('Get scheduled meetings error:', error);
+    res.status(500).json({ error: 'Failed to get scheduled meetings' });
   }
 });
 

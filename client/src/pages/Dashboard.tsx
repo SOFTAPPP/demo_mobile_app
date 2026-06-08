@@ -15,17 +15,32 @@ export default function Dashboard() {
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [recentMeetings, setRecentMeetings] = useState<Meeting[]>([]);
+  const [scheduledMeetings, setScheduledMeetings] = useState<Meeting[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState('');
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('');
   const [meetingToDelete, setMeetingToDelete] = useState<string | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(Date.now());
 
-  // Fetch recent meetings
+  // Update current time every minute to auto-enable start buttons
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Fetch recent and scheduled meetings
   useEffect(() => {
     const fetchMeetings = async () => {
       try {
-        const { data } = await api.get('/meetings/recent');
-        setRecentMeetings(data.meetings || []);
+        const [recentRes, scheduledRes] = await Promise.all([
+          api.get('/meetings/recent'),
+          api.get('/meetings/scheduled')
+        ]);
+        setRecentMeetings(recentRes.data.meetings || []);
+        setScheduledMeetings(scheduledRes.data.meetings || []);
       } catch {
         // Not critical — ignore
       }
@@ -109,6 +124,54 @@ export default function Dashboard() {
     }
   };
 
+  const handleScheduleMeeting = async () => {
+    if (!scheduleDate || !scheduleTime) {
+      setAlertMessage('Please select a date and time');
+      return;
+    }
+
+    setIsCreating(true);
+    setAlertMessage('');
+    try {
+      const scheduledFor = new Date(`${scheduleDate}T${scheduleTime}`).toISOString();
+      const { data } = await api.post('/meetings/schedule', {
+        title: meetingTitle.trim() || 'Scheduled Music Class',
+        scheduledFor,
+      });
+      setScheduledMeetings((prev) => [...prev, data.meeting].sort((a, b) => new Date(a.scheduled_for!).getTime() - new Date(b.scheduled_for!).getTime()));
+      setShowScheduleModal(false);
+      setMeetingTitle('');
+      setScheduleDate('');
+      setScheduleTime('');
+    } catch (err: any) {
+      setAlertMessage(err.response?.data?.error || 'Failed to schedule meeting');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const startScheduledMeeting = async (code: string) => {
+    setIsJoining(true);
+    const joinStartTime = performance.now();
+    try {
+      const { data } = await api.post('/meetings/join', {
+        roomCode: code,
+        displayName: user?.name,
+      });
+      navigate(`/meeting/${data.meeting.room_code}`, {
+        state: {
+          meeting: data.meeting,
+          livekit: data.livekit,
+          isHost: !!data.isHost,
+          joinStartTime,
+        },
+      });
+    } catch (err: any) {
+      setAlertMessage(err.response?.data?.error || 'Failed to start meeting');
+      setIsJoining(false);
+    }
+  };
+
   const handleDeleteMeeting = (meetingId: string) => {
     setMeetingToDelete(meetingId);
   };
@@ -181,7 +244,7 @@ export default function Dashboard() {
             <span className="sidebar__nav-icon">🔗</span>
             Join Meeting
           </div>
-          <div className="sidebar__nav-item">
+          <div className="sidebar__nav-item" onClick={() => setShowScheduleModal(true)}>
             <span className="sidebar__nav-icon">📅</span>
             Schedule
           </div>
@@ -249,7 +312,7 @@ export default function Dashboard() {
             <span className="quick-action-card__desc">Enter a room code to join a class</span>
           </button>
 
-          <button className="quick-action-card quick-action-card--schedule" id="schedule-btn">
+          <button className="quick-action-card quick-action-card--schedule" id="schedule-btn" onClick={() => setShowScheduleModal(true)}>
             <span className="quick-action-card__bg-icon">📅</span>
             <span className="quick-action-card__icon">📆</span>
             <span className="quick-action-card__title">Schedule</span>
@@ -280,6 +343,53 @@ export default function Dashboard() {
             <div className="stat-card__label">Max Students</div>
           </div>
         </div>
+
+        {/* Upcoming Classes */}
+        {scheduledMeetings.length > 0 && (
+          <>
+            <h2 className="section-title">📆 Upcoming Classes</h2>
+            <div className="meetings-list" style={{ marginBottom: '2rem' }}>
+              {scheduledMeetings.map((meeting, idx) => (
+                <div
+                  key={meeting.id}
+                  className="meeting-item"
+                  style={{ animationDelay: `${0.1 * idx}s`, borderLeft: '4px solid #4CAF50' }}
+                >
+                  <div className="meeting-item__icon">📅</div>
+                  <div className="meeting-item__info">
+                    <div className="meeting-item__title">{meeting.title}</div>
+                    <div className="meeting-item__meta" style={{ color: '#4CAF50', fontWeight: 600 }}>
+                      {formatDate(meeting.scheduled_for!)}
+                    </div>
+                  </div>
+                  <span className="meeting-item__code">{meeting.room_code}</span>
+                  <button
+                    className="btn-modal-primary"
+                    style={{ 
+                      padding: '6px 12px', 
+                      fontSize: '12px', 
+                      marginLeft: 'auto',
+                      opacity: new Date(meeting.scheduled_for!).getTime() <= currentTime ? 1 : 0.5,
+                      cursor: new Date(meeting.scheduled_for!).getTime() <= currentTime ? 'pointer' : 'not-allowed'
+                    }}
+                    onClick={() => startScheduledMeeting(meeting.room_code)}
+                    disabled={new Date(meeting.scheduled_for!).getTime() > currentTime}
+                    title={new Date(meeting.scheduled_for!).getTime() > currentTime ? "You can start the class once the scheduled time arrives" : ""}
+                  >
+                    Start Class
+                  </button>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); handleDeleteMeeting(meeting.id); }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', marginLeft: '10px' }}
+                    title="Delete Scheduled Meeting"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         {/* Recent Meetings */}
         <h2 className="section-title">📋 Recent Meetings</h2>
@@ -397,6 +507,69 @@ export default function Dashboard() {
                 id="create-btn"
               >
                 {isCreating ? 'Creating...' : '🎥 Start Meeting'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Meeting Modal */}
+      {showScheduleModal && (
+        <div className="modal-overlay" onClick={() => setShowScheduleModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal__title">Schedule a Class</h3>
+            <p className="modal__subtitle">Plan an upcoming music class</p>
+
+            <div className="form-group">
+              <label htmlFor="schedule-title">Class Title (optional)</label>
+              <input
+                id="schedule-title"
+                type="text"
+                className="form-input"
+                placeholder="e.g., Raga Yaman Practice"
+                value={meetingTitle}
+                onChange={(e) => setMeetingTitle(e.target.value)}
+              />
+            </div>
+
+            <div className="form-group" style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
+              <div style={{ flex: 1 }}>
+                <label htmlFor="schedule-date">Date</label>
+                <input
+                  id="schedule-date"
+                  type="date"
+                  className="form-input"
+                  value={scheduleDate}
+                  onChange={(e) => setScheduleDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label htmlFor="schedule-time">Time</label>
+                <input
+                  id="schedule-time"
+                  type="time"
+                  className="form-input"
+                  value={scheduleTime}
+                  onChange={(e) => setScheduleTime(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="modal__actions" style={{ marginTop: '24px' }}>
+              <button
+                className="btn-modal-secondary"
+                onClick={() => setShowScheduleModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-modal-primary"
+                onClick={handleScheduleMeeting}
+                disabled={isCreating}
+                style={{ background: '#4CAF50', borderColor: '#4CAF50' }}
+              >
+                {isCreating ? 'Scheduling...' : '📅 Schedule Class'}
               </button>
             </div>
           </div>

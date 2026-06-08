@@ -27,6 +27,7 @@ export interface Meeting {
   is_active: boolean | number;
   created_at: string;
   ended_at: string | null;
+  scheduled_for?: string | null;
 }
 
 export interface LiveKitInfo {

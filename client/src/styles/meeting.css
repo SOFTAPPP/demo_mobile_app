@@ -208,6 +208,8 @@
   background: var(--m-bg);
   position: relative;
   transition: background 0.3s ease;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 /* Top bar */
@@ -286,58 +288,68 @@
   flex: 1;
   display: flex;
   overflow: hidden;
-  padding: 0 var(--space-6);
+  padding: 0 var(--space-6) var(--space-4) var(--space-6);
 }
 
 .video-grid {
-  flex: 1;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: var(--space-4);
-  padding-bottom: 120px;
-  align-content: center;
-  justify-content: center;
-  overflow-y: auto;
+  align-items: stretch;
+  justify-content: stretch;
   width: 100%;
+  height: 100%;
+}
+
+/* 1 participant */
+.video-grid--1 {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+
+/* 2 participants (side by side on desktop) */
+.video-grid--2 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+
+/* 3 participants (1 top, 2 bottom) */
+.video-grid--3 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.video-grid--3 .video-tile:first-child {
+  grid-column: span 2;
+}
+
+/* 4 participants (2x2) */
+.video-grid--4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* Many participants */
+.video-grid--many {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-auto-rows: minmax(200px, 1fr);
+  overflow-y: auto;
 }
 
 .video-tile {
   position: relative;
-  border-radius: 20px;
+  border-radius: 16px;
   overflow: hidden;
   background: var(--m-card);
   box-shadow: 0 4px 24px var(--m-shadow);
-  aspect-ratio: 16 / 9;
   border: 4px solid var(--m-video-border);
   transition: border-color 0.2s ease, background 0.3s ease;
-  flex-shrink: 0;
-}
-
-/* Sizing based on grid class */
-.video-grid--1 .video-tile {
   width: 100%;
-  max-width: 1000px;
+  height: 100%;
 }
-
-.video-grid--2 .video-tile,
-.video-grid--4 .video-tile {
-  width: calc(50% - var(--space-4));
-  max-width: 800px;
-  min-width: 300px;
-}
-
-.video-grid--many .video-tile {
-  width: calc(33.333% - var(--space-4));
-  max-width: 500px;
-  min-width: 250px;
-}
-
 
 .video-tile video {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 16px;
 }
 
 .video-tile--local video {
@@ -374,11 +386,12 @@
   left: var(--space-3);
   font-size: var(--text-sm);
   font-weight: 600;
-  background: var(--m-card);
-  color: var(--m-text);
-  padding: 6px 12px;
-  border-radius: 20px;
-  box-shadow: 0 2px 8px var(--m-shadow);
+  background: rgba(0, 0, 0, 0.6);
+  color: #ffffff;
+  padding: 8px 14px;
+  border-radius: 8px;
+  box-shadow: none;
+  backdrop-filter: blur(4px);
 }
 
 .video-tile__muted {
@@ -402,11 +415,14 @@
 
 /* ── Bottom Control Bar ── */
 .meeting-room__controls-wrapper {
-  position: absolute;
-  bottom: var(--space-6);
-  left: 50%;
-  transform: translateX(-50%);
+  position: static;
+  width: 100%;
+  padding: 16px 24px;
+  background: var(--m-bg);
+  border-top: 1px solid var(--m-border);
   z-index: 20;
+  display: flex;
+  justify-content: center;
 }
 
 .meeting-room__controls {
@@ -414,11 +430,11 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
-  padding: var(--space-3);
-  background: var(--m-card);
-  border-radius: 40px;
-  box-shadow: 0 8px 32px var(--m-shadow);
-  border: 1px solid var(--m-border);
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  border: none;
 }
 
 .control-btn {
@@ -724,18 +740,9 @@
   }
 
   /* Force all tiles to fill their grid cell entirely */
-  .video-grid--1 .video-tile,
-  .video-grid--2 .video-tile,
-  .video-grid--3 .video-tile,
-  .video-grid--4 .video-tile,
-  .video-grid--many .video-tile {
-    width: 100% !important;
-    height: 100% !important;
-    max-width: none !important;
-    min-width: 0 !important;
-    aspect-ratio: auto !important;
-    border-radius: 16px;
-    border-width: 2px;
+  .video-tile {
+    border-radius: 12px !important;
+    border-width: 2px !important;
   }
 
   /* Bottom-left name tag like Google Meet */
