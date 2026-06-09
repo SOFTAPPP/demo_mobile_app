@@ -317,7 +317,16 @@ export default function Dashboard() {
               <div className="sidebar__user-name">{user?.name}</div>
               <div className="sidebar__user-role">{user?.role}</div>
             </div>
-            <button className="sidebar__logout" onClick={logout} title="Logout" id="logout-btn">
+            <button 
+              className="sidebar__logout" 
+              onClick={() => {
+                if (window.confirm("Are you sure you want to log out?")) {
+                  logout();
+                }
+              }} 
+              title="Logout" 
+              id="logout-btn"
+            >
               🚪
             </button>
           </div>
