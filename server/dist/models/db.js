@@ -39,9 +39,17 @@ db.exec(`
     is_active INTEGER DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now')),
     ended_at TEXT,
+    scheduled_for TEXT,
     FOREIGN KEY (host_id) REFERENCES users(id)
   )
 `);
+// Simple migration to add scheduled_for if the table already existed
+try {
+    db.exec(`ALTER TABLE meetings ADD COLUMN scheduled_for TEXT;`);
+}
+catch (e) {
+    // Column already exists, ignore
+}
 // Create meeting participants table
 db.exec(`
   CREATE TABLE IF NOT EXISTS meeting_participants (
@@ -52,6 +60,13 @@ db.exec(`
     FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )
+`);
+// Add Performance Indices
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_meetings_host ON meetings(host_id);
+  CREATE INDEX IF NOT EXISTS idx_meetings_room_code ON meetings(room_code);
+  CREATE INDEX IF NOT EXISTS idx_meetings_scheduled ON meetings(scheduled_for);
+  CREATE INDEX IF NOT EXISTS idx_meeting_participants_user ON meeting_participants(user_id);
 `);
 // User queries
 exports.userQueries = {
@@ -69,18 +84,28 @@ exports.meetingQueries = {
     INSERT INTO meetings (id, room_code, title, host_id, max_participants)
     VALUES (?, ?, ?, ?, ?)
   `),
+    schedule: db.prepare(`
+    INSERT INTO meetings (id, room_code, title, host_id, max_participants, scheduled_for)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `),
     findByCode: db.prepare(`SELECT * FROM meetings WHERE room_code = ?`),
     findById: db.prepare(`SELECT * FROM meetings WHERE id = ?`),
-    getActiveByHost: db.prepare(`SELECT * FROM meetings WHERE host_id = ? AND is_active = 1`),
+    getActiveByHost: db.prepare(`SELECT * FROM meetings WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NULL`),
     getRecent: db.prepare(`
     SELECT DISTINCT m.* FROM meetings m
     LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id
-    WHERE m.host_id = ? OR mp.user_id = ?
+    WHERE (m.host_id = ? AND (m.scheduled_for IS NULL OR m.is_active = 0)) 
+       OR (mp.user_id = ?)
     ORDER BY m.created_at DESC
     LIMIT 10
   `),
+    getScheduled: db.prepare(`
+    SELECT * FROM meetings 
+    WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NOT NULL 
+    ORDER BY scheduled_for ASC
+  `),
     endMeeting: db.prepare(`UPDATE meetings SET is_active = 0, ended_at = datetime('now') WHERE room_code = ?`),
-    getActive: db.prepare(`SELECT * FROM meetings WHERE is_active = 1`),
+    getActive: db.prepare(`SELECT * FROM meetings WHERE is_active = 1 AND scheduled_for IS NULL`),
     deleteMeeting: db.prepare(`DELETE FROM meetings WHERE id = ? AND host_id = ?`),
 };
 exports.default = db;

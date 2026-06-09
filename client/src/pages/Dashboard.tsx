@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { prepareLiveKitRoom } from '../services/livekitPrewarm';
 import type { Meeting } from '../types';
 import '../styles/dashboard.css';
 
@@ -71,11 +72,21 @@ export default function Dashboard() {
     console.log(`[⏱️ Profiling] 1. "Create Meeting" clicked at 0ms`);
     
     try {
+      // PROFILING OPTIMIZATION: Eagerly prefetch the massive WebRTC Meeting component bundle 
+      // *in parallel* with the API request. This completely eliminates the lazy-load delay!
+      const prefetchMeeting = import('./Meeting');
+
       const { data } = await api.post('/meetings/create', {
         title: meetingTitle.trim() || 'Music Class',
       });
       console.log(`[⏱️ Profiling] 2. API /create responded in ${(performance.now() - joinStartTime).toFixed(0)}ms`);
 
+      // PROFILING OPTIMIZATION: Start WebRTC background negotiation BEFORE React even navigates
+      prepareLiveKitRoom(data.livekit.url, data.livekit.token);
+
+      // We do NOT await prefetchMeeting here. We want to navigate immediately and let 
+      // React.Suspense handle the loading state, so the UI feels instantly responsive!
+      
       navigate(`/meeting/${data.meeting.room_code}`, {
         state: {
           meeting: data.meeting,
@@ -103,11 +114,19 @@ export default function Dashboard() {
     console.log(`[⏱️ Profiling] 1. "Join Meeting" clicked at 0ms`);
     
     try {
+      // PROFILING OPTIMIZATION: Parallel prefetch of the heavy WebRTC chunk
+      const prefetchMeeting = import('./Meeting');
+
       const { data } = await api.post('/meetings/join', {
         roomCode: roomCode.trim().toUpperCase(),
         displayName: user?.name,
       });
       console.log(`[⏱️ Profiling] 2. API /join responded in ${(performance.now() - joinStartTime).toFixed(0)}ms`);
+      
+      // PROFILING OPTIMIZATION: Start WebRTC background negotiation BEFORE React even navigates
+      prepareLiveKitRoom(data.livekit.url, data.livekit.token);
+
+      // We do NOT await prefetchMeeting here. We navigate immediately!
       
       navigate(`/meeting/${data.meeting.room_code}`, {
         state: {

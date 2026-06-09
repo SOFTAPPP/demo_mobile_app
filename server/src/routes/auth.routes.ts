@@ -1,11 +1,40 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
+import { z } from 'zod';
+import rateLimit from 'express-rate-limit';
 import { userQueries, User } from '../models/db';
 import { jwtService } from '../services/jwt.service';
 import { authMiddleware, AuthRequest } from '../middleware/auth.middleware';
 
 const router = Router();
+
+// Rate limiters
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // Limit each IP to 10 requests per `window`
+  message: { error: 'Too many requests from this IP, please try again later' },
+});
+
+// Zod schemas
+const signupSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters').max(50),
+  email: z.string().email('Invalid email address'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+  role: z.enum(['teacher', 'student']).optional(),
+});
+
+const loginSchema = z.object({
+  email: z.string().email('Invalid email address'),
+  password: z.string().min(1, 'Password is required'),
+});
+
+const cookieOptions = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax' as const,
+  path: '/',
+};
 
 // Random avatar colors matching the Sangeet Arghya theme
 const AVATAR_COLORS = [
@@ -16,14 +45,14 @@ const AVATAR_COLORS = [
 /**
  * POST /api/auth/signup
  */
-router.post('/signup', async (req: Request, res: Response): Promise<void> => {
+router.post('/signup', authLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, password, role } = req.body;
-
-    if (!name || !email || !password) {
-      res.status(400).json({ error: 'Name, email, and password are required' });
+    const parsedBody = signupSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      res.status(400).json({ error: parsedBody.error.issues[0].message });
       return;
     }
+    const { name, email, password, role } = parsedBody.data;
 
     // Check if user already exists
     const existing = userQueries.findByEmail.get(email) as User | undefined;
@@ -47,9 +76,13 @@ router.post('/signup', async (req: Request, res: Response): Promise<void> => {
       refreshToken: jwtService.signRefreshToken({ userId, email, role: userRole }),
     };
 
+    // No maxAge provided: these become strict Session Cookies.
+    // The browser will automatically delete them when the browser closes.
+    res.cookie('accessToken', tokens.accessToken, cookieOptions);
+    res.cookie('refreshToken', tokens.refreshToken, cookieOptions);
+
     res.status(201).json({
-      user: { id: userId, name, email, role: userRole, avatar_color: avatarColor },
-      ...tokens,
+      user: { id: userId, name, email, role: userRole, avatar_color: avatarColor }
     });
   } catch (error) {
     console.error('Signup error:', error);
@@ -60,14 +93,14 @@ router.post('/signup', async (req: Request, res: Response): Promise<void> => {
 /**
  * POST /api/auth/login
  */
-router.post('/login', async (req: Request, res: Response): Promise<void> => {
+router.post('/login', authLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      res.status(400).json({ error: 'Email and password are required' });
+    const parsedBody = loginSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      res.status(400).json({ error: parsedBody.error.issues[0].message });
       return;
     }
+    const { email, password } = parsedBody.data;
 
     const user = userQueries.findByEmail.get(email) as User | undefined;
     if (!user) {
@@ -86,6 +119,10 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       refreshToken: jwtService.signRefreshToken({ userId: user.id, email: user.email, role: user.role }),
     };
 
+    // No maxAge provided: these become strict Session Cookies.
+    res.cookie('accessToken', tokens.accessToken, cookieOptions);
+    res.cookie('refreshToken', tokens.refreshToken, cookieOptions);
+
     res.json({
       user: {
         id: user.id,
@@ -93,8 +130,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
         email: user.email,
         role: user.role,
         avatar_color: user.avatar_color,
-      },
-      ...tokens,
+      }
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -134,9 +170,10 @@ router.get('/me', authMiddleware, (req: AuthRequest, res: Response): void => {
  */
 router.post('/refresh', (req: Request, res: Response): void => {
   try {
-    const { refreshToken } = req.body;
+    const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
+    
     if (!refreshToken) {
-      res.status(400).json({ error: 'Refresh token required' });
+      res.status(401).json({ error: 'Refresh token required' });
       return;
     }
 
@@ -147,10 +184,21 @@ router.post('/refresh', (req: Request, res: Response): void => {
       role: decoded.role,
     });
 
-    res.json({ accessToken: newAccessToken });
+    res.cookie('accessToken', newAccessToken, cookieOptions);
+
+    res.json({ success: true });
   } catch (error) {
     res.status(401).json({ error: 'Invalid refresh token' });
   }
+});
+
+/**
+ * POST /api/auth/logout
+ */
+router.post('/logout', (req: Request, res: Response): void => {
+  res.clearCookie('accessToken');
+  res.clearCookie('refreshToken');
+  res.json({ success: true });
 });
 
 export default router;

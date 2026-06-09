@@ -1,3 +1,4 @@
+import 'express-async-errors';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 declare const app: import("express-serve-static-core").Express;

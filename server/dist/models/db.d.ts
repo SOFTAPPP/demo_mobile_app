@@ -18,6 +18,7 @@ export interface Meeting {
     is_active: number;
     created_at: string;
     ended_at: string | null;
+    scheduled_for: string | null;
 }
 export declare const userQueries: Record<string, Statement>;
 export declare const meetingQueries: Record<string, Statement>;

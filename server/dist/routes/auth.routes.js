@@ -6,10 +6,35 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const uuid_1 = require("uuid");
+const zod_1 = require("zod");
+const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const db_1 = require("../models/db");
 const jwt_service_1 = require("../services/jwt.service");
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const router = (0, express_1.Router)();
+// Rate limiters
+const authLimiter = (0, express_rate_limit_1.default)({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10, // Limit each IP to 10 requests per `window`
+    message: { error: 'Too many requests from this IP, please try again later' },
+});
+// Zod schemas
+const signupSchema = zod_1.z.object({
+    name: zod_1.z.string().min(2, 'Name must be at least 2 characters').max(50),
+    email: zod_1.z.string().email('Invalid email address'),
+    password: zod_1.z.string().min(6, 'Password must be at least 6 characters'),
+    role: zod_1.z.enum(['teacher', 'student']).optional(),
+});
+const loginSchema = zod_1.z.object({
+    email: zod_1.z.string().email('Invalid email address'),
+    password: zod_1.z.string().min(1, 'Password is required'),
+});
+const cookieOptions = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+};
 // Random avatar colors matching the Sangeet Arghya theme
 const AVATAR_COLORS = [
     '#7B2D26', '#8B4513', '#D4722A', '#B8860B', '#2D5F2D',
@@ -18,13 +43,14 @@ const AVATAR_COLORS = [
 /**
  * POST /api/auth/signup
  */
-router.post('/signup', async (req, res) => {
+router.post('/signup', authLimiter, async (req, res) => {
     try {
-        const { name, email, password, role } = req.body;
-        if (!name || !email || !password) {
-            res.status(400).json({ error: 'Name, email, and password are required' });
+        const parsedBody = signupSchema.safeParse(req.body);
+        if (!parsedBody.success) {
+            res.status(400).json({ error: parsedBody.error.issues[0].message });
             return;
         }
+        const { name, email, password, role } = parsedBody.data;
         // Check if user already exists
         const existing = db_1.userQueries.findByEmail.get(email);
         if (existing) {
@@ -42,9 +68,10 @@ router.post('/signup', async (req, res) => {
             accessToken: jwt_service_1.jwtService.signAccessToken({ userId, email, role: userRole }),
             refreshToken: jwt_service_1.jwtService.signRefreshToken({ userId, email, role: userRole }),
         };
+        res.cookie('accessToken', tokens.accessToken, { ...cookieOptions, maxAge: 15 * 60 * 1000 }); // 15 mins
+        res.cookie('refreshToken', tokens.refreshToken, { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 }); // 7 days
         res.status(201).json({
-            user: { id: userId, name, email, role: userRole, avatar_color: avatarColor },
-            ...tokens,
+            user: { id: userId, name, email, role: userRole, avatar_color: avatarColor }
         });
     }
     catch (error) {
@@ -55,13 +82,14 @@ router.post('/signup', async (req, res) => {
 /**
  * POST /api/auth/login
  */
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
     try {
-        const { email, password } = req.body;
-        if (!email || !password) {
-            res.status(400).json({ error: 'Email and password are required' });
+        const parsedBody = loginSchema.safeParse(req.body);
+        if (!parsedBody.success) {
+            res.status(400).json({ error: parsedBody.error.issues[0].message });
             return;
         }
+        const { email, password } = parsedBody.data;
         const user = db_1.userQueries.findByEmail.get(email);
         if (!user) {
             res.status(401).json({ error: 'Invalid email or password' });
@@ -76,6 +104,8 @@ router.post('/login', async (req, res) => {
             accessToken: jwt_service_1.jwtService.signAccessToken({ userId: user.id, email: user.email, role: user.role }),
             refreshToken: jwt_service_1.jwtService.signRefreshToken({ userId: user.id, email: user.email, role: user.role }),
         };
+        res.cookie('accessToken', tokens.accessToken, { ...cookieOptions, maxAge: 15 * 60 * 1000 });
+        res.cookie('refreshToken', tokens.refreshToken, { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 });
         res.json({
             user: {
                 id: user.id,
@@ -83,8 +113,7 @@ router.post('/login', async (req, res) => {
                 email: user.email,
                 role: user.role,
                 avatar_color: user.avatar_color,
-            },
-            ...tokens,
+            }
         });
     }
     catch (error) {
@@ -123,9 +152,9 @@ router.get('/me', auth_middleware_1.authMiddleware, (req, res) => {
  */
 router.post('/refresh', (req, res) => {
     try {
-        const { refreshToken } = req.body;
+        const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
         if (!refreshToken) {
-            res.status(400).json({ error: 'Refresh token required' });
+            res.status(401).json({ error: 'Refresh token required' });
             return;
         }
         const decoded = jwt_service_1.jwtService.verifyRefreshToken(refreshToken);
@@ -134,11 +163,20 @@ router.post('/refresh', (req, res) => {
             email: decoded.email,
             role: decoded.role,
         });
-        res.json({ accessToken: newAccessToken });
+        res.cookie('accessToken', newAccessToken, { ...cookieOptions, maxAge: 15 * 60 * 1000 });
+        res.json({ success: true });
     }
     catch (error) {
         res.status(401).json({ error: 'Invalid refresh token' });
     }
+});
+/**
+ * POST /api/auth/logout
+ */
+router.post('/logout', (req, res) => {
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
+    res.json({ success: true });
 });
 exports.default = router;
 //# sourceMappingURL=auth.routes.js.map

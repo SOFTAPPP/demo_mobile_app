@@ -93,6 +93,43 @@ router.post('/create', async (req, res) => {
     }
 });
 /**
+ * POST /api/meetings/schedule
+ * Teacher schedules a new meeting room for a future date
+ */
+router.post('/schedule', async (req, res) => {
+    try {
+        const { title, scheduledFor } = req.body;
+        const meetingTitle = title || 'Scheduled Music Class';
+        if (!scheduledFor) {
+            res.status(400).json({ error: 'scheduledFor date is required' });
+            return;
+        }
+        const meetingId = (0, uuid_1.v4)();
+        let roomCode = generateRoomCode();
+        // Ensure unique room code
+        let existing = db_1.meetingQueries.findByCode.get(roomCode);
+        while (existing) {
+            roomCode = generateRoomCode();
+            existing = db_1.meetingQueries.findByCode.get(roomCode);
+        }
+        // Insert scheduled meeting into the database
+        db_1.meetingQueries.schedule.run(meetingId, roomCode, meetingTitle, req.user.userId, 100, scheduledFor);
+        res.status(201).json({
+            meeting: {
+                id: meetingId,
+                room_code: roomCode,
+                title: meetingTitle,
+                is_active: true,
+                scheduled_for: scheduledFor
+            }
+        });
+    }
+    catch (error) {
+        console.error('Schedule meeting error:', error);
+        res.status(500).json({ error: 'Failed to schedule meeting' });
+    }
+});
+/**
  * POST /api/meetings/join
  * Student joins an existing meeting
  */
@@ -133,6 +170,7 @@ router.post('/join', async (req, res) => {
                 title: meeting.title,
                 is_active: true,
             },
+            isHost: isTeacher,
             livekit: {
                 token,
                 url: livekit_service_1.livekitService.getServerUrl(),
@@ -149,7 +187,7 @@ router.post('/join', async (req, res) => {
  * POST /api/meetings/end
  * Teacher ends a meeting
  */
-router.post('/end', (req, res) => {
+router.post('/end', async (req, res) => {
     try {
         const { roomCode } = req.body;
         if (!roomCode) {
@@ -167,6 +205,11 @@ router.post('/end', (req, res) => {
             return;
         }
         db_1.meetingQueries.endMeeting.run(cleanRoomCode);
+        // Broadcast instantly to all participants via Socket.io for 0-latency teardown
+        const { io } = await Promise.resolve().then(() => __importStar(require('../index')));
+        io.to(cleanRoomCode).emit('meeting-ended');
+        // Asynchronously tell LiveKit to kick everyone out and delete the room
+        livekit_service_1.livekitService.endRoom(cleanRoomCode);
         res.json({ message: 'Meeting ended successfully' });
     }
     catch (error) {
@@ -186,6 +229,20 @@ router.get('/recent', (req, res) => {
     catch (error) {
         console.error('Get recent meetings error:', error);
         res.status(500).json({ error: 'Failed to get meetings' });
+    }
+});
+/**
+ * GET /api/meetings/scheduled
+ * Get scheduled meetings for the current user
+ */
+router.get('/scheduled', (req, res) => {
+    try {
+        const meetings = db_1.meetingQueries.getScheduled.all(req.user.userId);
+        res.json({ meetings });
+    }
+    catch (error) {
+        console.error('Get scheduled meetings error:', error);
+        res.status(500).json({ error: 'Failed to get scheduled meetings' });
     }
 });
 /**

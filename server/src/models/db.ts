@@ -64,6 +64,14 @@ db.exec(`
   )
 `);
 
+// Add Performance Indices
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_meetings_host ON meetings(host_id);
+  CREATE INDEX IF NOT EXISTS idx_meetings_room_code ON meetings(room_code);
+  CREATE INDEX IF NOT EXISTS idx_meetings_scheduled ON meetings(scheduled_for);
+  CREATE INDEX IF NOT EXISTS idx_meeting_participants_user ON meeting_participants(user_id);
+`);
+
 export interface User {
   id: string;
   name: string;

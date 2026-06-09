@@ -20,20 +20,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Check for existing session on mount
   useEffect(() => {
     const checkAuth = async () => {
-      const token = localStorage.getItem('accessToken');
-      const storedUser = localStorage.getItem('user');
+      const storedUser = sessionStorage.getItem('user');
 
-      if (token && storedUser) {
+      if (storedUser) {
         try {
           // Verify token is still valid
           const { data } = await api.get('/auth/me');
           setUser(data.user);
-          localStorage.setItem('user', JSON.stringify(data.user));
+          sessionStorage.setItem('user', JSON.stringify(data.user));
         } catch {
           // Token invalid — clear storage and logout
-          localStorage.removeItem('accessToken');
-          localStorage.removeItem('refreshToken');
-          localStorage.removeItem('user');
+          sessionStorage.removeItem('user');
           setUser(null);
         }
       }
@@ -45,24 +42,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const { data } = await api.post<AuthResponse>('/auth/login', { email, password });
-    localStorage.setItem('accessToken', data.accessToken);
-    localStorage.setItem('refreshToken', data.refreshToken);
-    localStorage.setItem('user', JSON.stringify(data.user));
+    sessionStorage.setItem('user', JSON.stringify(data.user));
     setUser(data.user);
   }, []);
 
   const signup = useCallback(async (name: string, email: string, password: string, role: string) => {
     const { data } = await api.post<AuthResponse>('/auth/signup', { name, email, password, role });
-    localStorage.setItem('accessToken', data.accessToken);
-    localStorage.setItem('refreshToken', data.refreshToken);
-    localStorage.setItem('user', JSON.stringify(data.user));
+    sessionStorage.setItem('user', JSON.stringify(data.user));
     setUser(data.user);
   }, []);
 
-  const logout = useCallback(() => {
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
-    localStorage.removeItem('user');
+  const logout = useCallback(async () => {
+    try {
+      await api.post('/auth/logout');
+    } catch (e) {
+      // Ignore errors on logout
+    }
+    sessionStorage.removeItem('user');
     setUser(null);
   }, []);
 

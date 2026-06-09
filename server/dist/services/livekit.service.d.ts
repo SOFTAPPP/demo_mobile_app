@@ -8,9 +8,10 @@ export declare const livekitService: {
      * Get the LiveKit WebSocket URL for the client to connect to
      */
     getServerUrl(): string;
-    /**
-     * Check if LiveKit is configured with valid non-placeholder credentials
-     */
     isConfigured(): boolean;
+    /**
+     * Forcefully ends a LiveKit room, kicking out all participants
+     */
+    endRoom(roomName: string): Promise<void>;
 };
 //# sourceMappingURL=livekit.service.d.ts.map

@@ -1,13 +1,23 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
-import Dashboard from './pages/Dashboard';
-import Meeting from './pages/Meeting';
-import MeetingEnded from './pages/MeetingEnded';
 import './styles/index.css';
+
+// Lazy load heavy components
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Meeting = lazy(() => import('./pages/Meeting'));
+const MeetingEnded = lazy(() => import('./pages/MeetingEnded'));
+
+// Loading Fallback
+const PageLoader = () => (
+  <div className="page-loader">
+    <span className="loader" />
+    <span className="page-loader__text">Loading...</span>
+  </div>
+);
 
 // Protected route wrapper
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -73,7 +83,9 @@ function AppRoutes() {
         path="/dashboard"
         element={
           <ProtectedRoute>
-            <Dashboard />
+            <Suspense fallback={<PageLoader />}>
+              <Dashboard />
+            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -81,7 +93,9 @@ function AppRoutes() {
         path="/meeting/:roomCode"
         element={
           <ProtectedRoute>
-            <Meeting />
+            <Suspense fallback={<PageLoader />}>
+              <Meeting />
+            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -89,7 +103,9 @@ function AppRoutes() {
         path="/meeting-ended"
         element={
           <ProtectedRoute>
-            <MeetingEnded />
+            <Suspense fallback={<PageLoader />}>
+              <MeetingEnded />
+            </Suspense>
           </ProtectedRoute>
         }
       />

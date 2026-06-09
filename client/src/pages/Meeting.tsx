@@ -15,27 +15,8 @@ import { useAuth } from '../context/AuthContext';
 import { Mic, MicOff, Video as VideoIcon, VideoOff, Users, PhoneOff, LogOut, Signal, SignalHigh, SignalLow, SignalMedium, Palette } from 'lucide-react';
 import { io as socketIO } from 'socket.io-client';
 import api from '../services/api';
+import { roomOptions, getSharedRoom, clearSharedRoom } from '../services/livekitPrewarm';
 import '../styles/meeting.css';
-
-const roomOptions: RoomOptions = {
-  adaptiveStream: { pixelDensity: 'screen' }, // Smart adaptive video based on screen size
-  dynacast: true, // Dynamically manage video quality
-  videoCaptureDefaults: {
-    resolution: VideoPresets.h1080.resolution, // Lowered to 1080p to preserve bandwidth for audio
-  },
-  audioCaptureDefaults: {
-    echoCancellation: true, 
-    noiseSuppression: true, 
-    autoGainControl: true,  
-  },
-  publishDefaults: {
-    simulcast: true, // Allow fallback qualities for bad networks
-    videoEncoding: {
-      maxBitrate: 1_500_000, // Capped at 1.5 Mbps to prevent network DDOS
-      maxFramerate: 30,
-    }
-  },
-};
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
   constructor(props: any) {
@@ -90,6 +71,7 @@ export default function Meeting() {
   const [connectionError, setConnectionError] = useState<string>('');
   const [theme, setTheme] = useState<'light' | 'maroon'>('light');
   const [isHost, setIsHost] = useState(!!location.state?.isHost);
+  const prewarmedRoom = useRef(getSharedRoom());
 
   // Socket.io for instant teardown
   useEffect(() => {
@@ -104,6 +86,7 @@ export default function Meeting() {
     socket.on('meeting-ended', () => {
       console.log(`[⏱️ Profiling] Socket.io INSTANT Teardown Received`);
       socket.disconnect();
+      clearSharedRoom();
       navigate('/meeting-ended', { state: { roomCode } });
     });
 
@@ -169,9 +152,10 @@ export default function Meeting() {
     <ErrorBoundary>
       <div className={`meeting-page ${theme === 'maroon' ? 'theme-maroon' : ''}`}>
         <LiveKitRoom
+          room={prewarmedRoom.current || undefined}
           serverUrl={livekitUrl}
           token={livekitToken}
-          options={roomOptions}
+          options={prewarmedRoom.current ? undefined : roomOptions}
           video={false}
           audio={false}
           onConnected={() => {
@@ -198,12 +182,14 @@ export default function Meeting() {
             isHost={isHost}
             onLeave={async () => {
               isLeavingManually.current = true;
+              clearSharedRoom();
               navigate('/dashboard');
             }} 
             onEnd={async () => {
               if (isHost) {
                 try {
                   await api.post('/meetings/end', { roomCode });
+                  clearSharedRoom();
                   // Navigate host to the meeting-ended page directly
                   navigate('/meeting-ended', { state: { roomCode } });
                 } catch (e) {
@@ -254,7 +240,7 @@ function BrandedMeetingUI({
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled } = useLocalParticipant();
   const [elapsed, setElapsed] = useState(0);
   const [showParticipants, setShowParticipants] = useState(false);
-  const [musicMode, setMusicMode] = useState(false);
+  const [musicMode, setMusicMode] = useState(false); // Default to standard mode
 
   // Synthesize a nice chime without needing any audio files
   const playTone = useCallback((type: 'join' | 'leave') => {

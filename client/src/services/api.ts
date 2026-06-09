@@ -12,19 +12,10 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true,
 });
 
-// Request interceptor — attach JWT token
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('accessToken');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+// Remove request interceptor since cookies are sent automatically.
 
 // Response interceptor — handle 401 (token expired)
 api.interceptors.response.use(
@@ -37,20 +28,12 @@ api.interceptors.response.use(
       originalRequest._retry = true;
 
       try {
-        const refreshToken = localStorage.getItem('refreshToken');
-        if (!refreshToken) {
-          throw new Error('No refresh token');
-        }
+        await axios.post(`${api.defaults.baseURL || ''}/auth/refresh`, {}, { withCredentials: true });
 
-        const { data } = await axios.post(`${api.defaults.baseURL || ''}/auth/refresh`, { refreshToken });
-        localStorage.setItem('accessToken', data.accessToken);
-
-        originalRequest.headers.Authorization = `Bearer ${data.accessToken}`;
+        // Retry original request since the cookie has been refreshed
         return api(originalRequest);
       } catch (refreshError) {
         // Refresh failed — force logout
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('refreshToken');
         localStorage.removeItem('user');
         if (window.location.pathname !== '/login') {
           window.location.href = '/login';
