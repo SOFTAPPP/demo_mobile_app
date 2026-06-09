@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
-import { prepareLiveKitRoom } from '../services/livekitPrewarm';
+import { prepareLiveKitRoom, clearSharedRoom } from '../services/livekitPrewarm';
 import type { Meeting } from '../types';
 import '../styles/dashboard.css';
 
@@ -30,6 +31,33 @@ export default function Dashboard() {
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  // CRITICAL FIX: Kill any lingering WebRTC connections if the user lands here
+  // (e.g. by pressing the browser's Back button from the Meeting room).
+  // This completely prevents the "ghost participant" bug without being affected by
+  // React 18 Strict Mode double-render bugs!
+  useEffect(() => {
+    clearSharedRoom();
+  }, []);
+
+  // Live Socket.io connection to update Dashboard badges instantly
+  useEffect(() => {
+    const socketUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : '/';
+    const socket = io(socketUrl);
+
+    socket.on('meeting-ended-global', (endedRoomCode: string) => {
+      setRecentMeetings(prev => 
+        prev.map(m => m.room_code === endedRoomCode ? { ...m, is_active: 0 } : m)
+      );
+      setScheduledMeetings(prev => 
+        prev.map(m => m.room_code === endedRoomCode ? { ...m, is_active: 0 } : m)
+      );
+    });
+
+    return () => {
+      socket.disconnect();
+    };
   }, []);
 
   // Fetch recent and scheduled meetings

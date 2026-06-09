@@ -204,6 +204,7 @@ router.post('/end', async (req: AuthRequest, res: Response): Promise<void> => {
     // Broadcast instantly to all participants via Socket.io for 0-latency teardown
     const { io } = await import('../index');
     io.to(cleanRoomCode).emit('meeting-ended');
+    io.emit('meeting-ended-global', cleanRoomCode); 
 
     // Asynchronously tell LiveKit to kick everyone out and delete the room
     livekitService.endRoom(cleanRoomCode);

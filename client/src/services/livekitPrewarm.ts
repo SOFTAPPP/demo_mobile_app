@@ -50,5 +50,8 @@ export const getSharedRoom = (): Room | null => {
 };
 
 export const clearSharedRoom = () => {
-  sharedRoom = null;
+  if (sharedRoom) {
+    sharedRoom.disconnect();
+    sharedRoom = null;
+  }
 };
