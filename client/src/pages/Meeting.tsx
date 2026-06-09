@@ -1,21 +1,21 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import {
   LiveKitRoom,
   RoomAudioRenderer,
-  useTracks,
-  useParticipants,
-  useLocalParticipant,
-  useRoomContext,
-  VideoTrack,
   useConnectionState,
+  useLocalParticipant,
+  useParticipants,
+  useRoomContext,
+  useTracks,
+  VideoTrack,
 } from '@livekit/components-react';
-import { Track, RoomOptions, VideoPresets, RoomEvent, LocalAudioTrack } from 'livekit-client';
-import { useAuth } from '../context/AuthContext';
-import { Mic, MicOff, Video as VideoIcon, VideoOff, Users, PhoneOff, LogOut, Signal, SignalHigh, SignalLow, SignalMedium, Palette, Disc, Square } from 'lucide-react';
+import { LocalAudioTrack, RoomEvent, Track } from 'livekit-client';
+import { Disc, LogOut, Mic, MicOff, Palette, PhoneOff, Square, Users, Video as VideoIcon, VideoOff } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { io as socketIO } from 'socket.io-client';
+import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
-import { prepareLiveKitRoom, clearSharedRoom, getSharedRoom, roomOptions } from '../services/livekitPrewarm';
+import { clearSharedRoom, getSharedRoom, roomOptions } from '../services/livekitPrewarm';
 import '../styles/meeting.css';
 
 // Audio helper for nice chimes
@@ -24,10 +24,10 @@ const playNotificationSound = (type: 'start' | 'stop') => {
     const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
     const oscillator = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
-    
+
     oscillator.connect(gainNode);
     gainNode.connect(audioCtx.destination);
-    
+
     if (type === 'start') {
       // Happy rising chime
       oscillator.type = 'sine';
@@ -49,7 +49,7 @@ const playNotificationSound = (type: 'start' | 'stop') => {
       oscillator.start(audioCtx.currentTime);
       oscillator.stop(audioCtx.currentTime + 0.3);
     }
-  } catch(e) {
+  } catch (e) {
     console.log("Audio not supported or blocked", e);
   }
 };
@@ -76,8 +76,8 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
           <pre style={{ background: '#1A0D12', padding: '15px', borderRadius: '8px', overflow: 'auto' }}>
             {this.state.error?.stack || String(this.state.error)}
           </pre>
-          <button 
-            onClick={() => window.location.reload()} 
+          <button
+            onClick={() => window.location.reload()}
             style={{ padding: '10px 20px', background: '#FF4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
           >
             Reload Page
@@ -95,7 +95,7 @@ export default function Meeting() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
-  
+
   const isLeavingManually = useRef(false);
   const hasConnected = useRef(false);
 
@@ -109,17 +109,17 @@ export default function Meeting() {
   const [isHost, setIsHost] = useState(!!location.state?.isHost);
   const [isRecording, setIsRecording] = useState(false);
   const [egressId, setEgressId] = useState<string | null>(null);
-  const [recordingToast, setRecordingToast] = useState<{show: boolean, type: 'start' | 'stop' | null}>({show: false, type: null});
+  const [recordingToast, setRecordingToast] = useState<{ show: boolean, type: 'start' | 'stop' | null }>({ show: false, type: null });
   const prewarmedRoom = useRef(getSharedRoom());
 
   // Socket.io for instant teardown
   useEffect(() => {
     if (!roomCode) return;
-    
+
     // Connect to the backend root (which proxies via Vite or connects directly)
     const socketUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : '/';
     const socket = socketIO(socketUrl);
-    
+
     socket.emit('join-room', roomCode);
 
     socket.on('meeting-ended', () => {
@@ -239,15 +239,15 @@ export default function Meeting() {
           }}
           style={{ height: '100dvh', width: '100vw' }}
         >
-          <BrandedMeetingUI 
-            roomCode={roomCode || ''} 
-            meetingTitle={meetingTitle} 
+          <BrandedMeetingUI
+            roomCode={roomCode || ''}
+            meetingTitle={meetingTitle}
             isHost={isHost}
             onLeave={async () => {
               isLeavingManually.current = true;
               clearSharedRoom();
               navigate('/dashboard');
-            }} 
+            }}
             onEnd={async () => {
               if (isHost) {
                 try {
@@ -297,8 +297,8 @@ export default function Meeting() {
           top: '20px',
           left: '50%',
           transform: 'translateX(-50%)',
-          background: recordingToast.type === 'start' 
-            ? 'linear-gradient(135deg, rgba(220, 38, 38, 0.95) 0%, rgba(185, 28, 28, 0.95) 100%)' 
+          background: recordingToast.type === 'start'
+            ? 'linear-gradient(135deg, rgba(220, 38, 38, 0.95) 0%, rgba(185, 28, 28, 0.95) 100%)'
             : 'linear-gradient(135deg, rgba(37, 99, 235, 0.95) 0%, rgba(29, 78, 216, 0.95) 100%)',
           color: 'white',
           padding: '16px 24px',
@@ -320,8 +320,8 @@ export default function Meeting() {
               Recording {recordingToast.type === 'start' ? 'Started' : 'Saved'}
             </h4>
             <p style={{ margin: '4px 0 0 0', fontSize: '0.9rem', color: 'rgba(255,255,255,0.9)' }}>
-              {recordingToast.type === 'start' 
-                ? 'This session is now being recorded to the cloud.' 
+              {recordingToast.type === 'start'
+                ? 'This session is now being recorded.'
                 : 'The recording is now available on your dashboard.'}
             </p>
           </div>
@@ -332,9 +332,9 @@ export default function Meeting() {
 }
 
 // Custom UI that consumes LiveKit context
-function BrandedMeetingUI({ 
-  roomCode, 
-  meetingTitle, 
+function BrandedMeetingUI({
+  roomCode,
+  meetingTitle,
   isHost,
   onLeave,
   onEnd,
@@ -347,9 +347,9 @@ function BrandedMeetingUI({
   egressId,
   onOptimisticStart,
   onOptimisticStop
-}: { 
-  roomCode: string; 
-  meetingTitle: string; 
+}: {
+  roomCode: string;
+  meetingTitle: string;
   isHost: boolean;
   onLeave: () => void;
   onEnd?: () => void;
@@ -378,9 +378,9 @@ function BrandedMeetingUI({
       const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioContext) return;
       const ctx = new AudioContext();
-      
+
       if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => {});
+        ctx.resume().catch(() => { });
       }
 
       const osc = ctx.createOscillator();
@@ -417,7 +417,7 @@ function BrandedMeetingUI({
   // Listen for participant enter/leave to play the sound
   useEffect(() => {
     if (!room) return;
-    
+
     const onParticipantConnected = () => playTone('join');
     const onParticipantDisconnected = () => playTone('leave');
 
@@ -432,7 +432,7 @@ function BrandedMeetingUI({
 
   const [optimisticMic, setOptimisticMic] = useState<boolean | null>(null);
   const [optimisticCam, setOptimisticCam] = useState<boolean | null>(null);
-  
+
   // Confirmation Modal State
   const [confirmAction, setConfirmAction] = useState<'leave' | 'end' | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
@@ -452,7 +452,7 @@ function BrandedMeetingUI({
     if ((connectionState === 'connected' || connectionState === 'reconnecting') && connectionError) {
       clearConnectionError();
     }
-    
+
     if (connectionState === 'connected' && joinStartTime) {
       console.log(`[⏱️ Profiling] 4. LiveKit Connection Excellent (Connected) in ${(performance.now() - joinStartTime).toFixed(0)}ms`);
     }
@@ -469,7 +469,12 @@ function BrandedMeetingUI({
 
   const [recElapsed, setRecElapsed] = useState(0);
 
-  // Timer
+  // Timers
+  useEffect(() => {
+    const elapsedTimer = setInterval(() => setElapsed((prev) => prev + 1), 1000);
+    return () => clearInterval(elapsedTimer);
+  }, []);
+
   useEffect(() => {
     let timer: any;
     if (isRecording) {
@@ -529,9 +534,9 @@ function BrandedMeetingUI({
   };
 
   // Determine grid layout based on number of tracks
-  const gridClass = tracks.length <= 1 ? 'video-grid--1' : 
-                    tracks.length <= 2 ? 'video-grid--2' : 
-                    tracks.length <= 4 ? 'video-grid--4' : 'video-grid--many';
+  const gridClass = tracks.length <= 1 ? 'video-grid--1' :
+    tracks.length <= 2 ? 'video-grid--2' :
+      tracks.length <= 4 ? 'video-grid--4' : 'video-grid--many';
 
   const handleRecordToggle = async () => {
     try {
@@ -541,13 +546,11 @@ function BrandedMeetingUI({
         await api.post('/meetings/record/stop', { egressId });
       } else {
         if (onOptimisticStart) onOptimisticStart();
-        
-        // FAKE TRACK LOGIC: LiveKit Cloud Egress waits for at least 1 track before it starts recording.
-        // To force it to record instantly even if the host's mic and camera are OFF, we count tracks.
+
         let totalTracks = 0;
         room.remoteParticipants.forEach((p) => { totalTracks += p.trackPublications.size; });
         totalTracks += room.localParticipant.trackPublications.size;
-        
+
         if (totalTracks === 0) {
           try {
             // Generate a 100% silent audio track using Web Audio API (does NOT prompt user for permissions!)
@@ -559,18 +562,18 @@ function BrandedMeetingUI({
             oscillator.connect(gainNode);
             gainNode.connect(dst);
             oscillator.start();
-            
+
             const track = dst.stream.getAudioTracks()[0];
             const dummyTrack = new LocalAudioTrack(track);
             // Publish as Unknown source so the UI doesn't show a Microphone icon!
             await room.localParticipant.publishTrack(dummyTrack, { name: 'silence', source: Track.Source.Unknown });
-            
+
             // The Egress server will detect the track and start recording instantly.
             // We can safely unpublish it after 10 seconds because the Egress will have fully booted up.
             setTimeout(() => {
               room.localParticipant.unpublishTrack(dummyTrack).catch(console.error);
             }, 10000);
-          } catch(e) {
+          } catch (e) {
             console.log('Failed to create dummy track', e);
           }
         }
@@ -580,7 +583,7 @@ function BrandedMeetingUI({
     } catch (e: any) {
       console.error('Failed to toggle recording', e);
       setAlertMessage(e.response?.data?.error || 'Failed to toggle recording.');
-      
+
       // Revert optimistic UI on failure
       if (isRecording) {
         if (onOptimisticStart) onOptimisticStart();
@@ -653,13 +656,12 @@ function BrandedMeetingUI({
             <Palette size={18} />
           </button>
           <div className="connection-status">
-            <span className={`connection-status__dot connection-status__dot--${
-              connectionState === 'connected' ? 'good' :
+            <span className={`connection-status__dot connection-status__dot--${connectionState === 'connected' ? 'good' :
               connectionState === 'connecting' || connectionState === 'reconnecting' ? 'fair' : 'poor'
-            }`} />
-            {connectionState === 'connected' ? 'Excellent' : 
-             connectionState === 'connecting' ? 'Connecting...' : 
-             connectionState === 'reconnecting' ? 'Reconnecting...' : 'Disconnected'}
+              }`} />
+            {connectionState === 'connected' ? 'Excellent' :
+              connectionState === 'connecting' ? 'Connecting...' :
+                connectionState === 'reconnecting' ? 'Reconnecting...' : 'Disconnected'}
           </div>
           <span className="meeting-room__timer">⏱ {formatTime(elapsed)}</span>
           <button
@@ -750,8 +752,8 @@ function BrandedMeetingUI({
             <span className="control-btn__tooltip">{displayCam ? 'Stop Camera' : 'Start Camera'}</span>
           </button>
 
-          <button 
-            className={`control-btn ${musicMode ? 'control-btn--active' : 'control-btn--default'}`} 
+          <button
+            className={`control-btn ${musicMode ? 'control-btn--active' : 'control-btn--default'}`}
             onClick={toggleMusicMode}
             style={musicMode ? { background: '#D97706', color: 'white', borderColor: '#D97706' } : {}}
           >
@@ -774,12 +776,12 @@ function BrandedMeetingUI({
 
           {isHost && (
             <>
-              <button 
-                className={`control-btn ${isRecording ? 'control-btn--active' : 'control-btn--default'}`} 
+              <button
+                className={`control-btn ${isRecording ? 'control-btn--active' : 'control-btn--default'}`}
                 onClick={handleRecordToggle}
                 disabled={isRecordLoading}
-                style={isRecording 
-                  ? { background: '#DC2626', color: 'white', borderColor: '#DC2626', animation: 'pulse 2s infinite' } 
+                style={isRecording
+                  ? { background: '#DC2626', color: 'white', borderColor: '#DC2626', animation: 'pulse 2s infinite' }
                   : { background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.3)' }
                 }
               >
@@ -799,8 +801,8 @@ function BrandedMeetingUI({
       {/* Custom Confirmation Modal */}
       {confirmAction && (
         <div className="modal-overlay" style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
-          backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', 
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex',
           alignItems: 'center', justifyContent: 'center', zIndex: 9999,
           backdropFilter: 'blur(4px)'
         }}>
@@ -813,12 +815,12 @@ function BrandedMeetingUI({
               {confirmAction === 'end' ? 'End Meeting for All?' : 'Leave Meeting?'}
             </h3>
             <p style={{ color: '#4B5563', marginBottom: '24px', fontSize: '0.95rem', lineHeight: 1.4 }}>
-              {confirmAction === 'end' 
-                ? 'Are you sure you want to completely end this meeting and disconnect all participants?' 
+              {confirmAction === 'end'
+                ? 'Are you sure you want to completely end this meeting and disconnect all participants?'
                 : 'Are you sure you want to leave this meeting? You can rejoin later.'}
             </p>
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button 
+              <button
                 onClick={() => setConfirmAction(null)}
                 style={{ flex: 1, padding: '10px', background: '#F3F4F6', color: '#374151', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}
                 onMouseOver={(e) => e.currentTarget.style.background = '#E5E7EB'}
@@ -826,7 +828,7 @@ function BrandedMeetingUI({
               >
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={() => {
                   if (confirmAction === 'end') {
                     if (onEnd) onEnd();
@@ -855,7 +857,7 @@ function BrandedMeetingUI({
             <p style={{ color: '#4B5563', fontSize: '0.95rem', marginBottom: '24px', lineHeight: 1.5 }}>
               {alertMessage}
             </p>
-            <button 
+            <button
               onClick={() => setAlertMessage(null)}
               style={{ width: '100%', padding: '10px', background: '#F3F4F6', color: '#374151', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}
             >
@@ -888,11 +890,11 @@ function ParticipantVideoTile({ trackRef }: { trackRef: any }) {
           </div>
         </div>
       )}
-      
+
       <span className="video-tile__name">
         {p.name} {p.isLocal && '(You)'}
       </span>
-      
+
       {!isAudioEnabled && <span className="video-tile__muted"><MicOff size={14} color="white" /></span>}
     </div>
   );
