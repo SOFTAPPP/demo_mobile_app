@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
+import { Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { prepareLiveKitRoom, clearSharedRoom } from '../services/livekitPrewarm';
@@ -23,6 +24,7 @@ export default function Dashboard() {
   const [showRecordingsModal, setShowRecordingsModal] = useState(false);
   const [selectedRecordings, setSelectedRecordings] = useState<any[]>([]);
   const [isLoadingRecordings, setIsLoadingRecordings] = useState(false);
+  const [deleteRecordingId, setDeleteRecordingId] = useState<string | null>(null);
   const [meetingTitle, setMeetingTitle] = useState('');
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
@@ -257,6 +259,33 @@ export default function Dashboard() {
     }
   };
 
+  const handleViewAllRecordings = async () => {
+    setShowRecordingsModal(true);
+    setIsLoadingRecordings(true);
+    setSelectedRecordings([]);
+    try {
+      const { data } = await api.get(`/meetings/recordings/all`);
+      setSelectedRecordings(data.recordings || []);
+    } catch (err) {
+      console.error('Failed to fetch recordings', err);
+    } finally {
+      setIsLoadingRecordings(false);
+    }
+  };
+
+  const confirmDeleteRecording = async () => {
+    if (!deleteRecordingId) return;
+    try {
+      await api.delete(`/meetings/recordings/${deleteRecordingId}`);
+      setSelectedRecordings(prev => prev.filter(r => r.id !== deleteRecordingId));
+      setDeleteRecordingId(null);
+    } catch (err: any) {
+      console.error('Failed to delete recording', err);
+      alert(err.response?.data?.error || 'Failed to delete recording');
+      setDeleteRecordingId(null);
+    }
+  };
+
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
     return d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -420,6 +449,13 @@ export default function Dashboard() {
             <span className="quick-action-card__icon">📆</span>
             <span className="quick-action-card__title">Schedule</span>
             <span className="quick-action-card__desc">Plan your upcoming classes</span>
+          </button>
+
+          <button className="quick-action-card" id="recordings-btn" style={{ background: 'linear-gradient(135deg, #2563EB 0%, #3B82F6 100%)' }} onClick={handleViewAllRecordings}>
+            <span className="quick-action-card__bg-icon" style={{ opacity: 0.1 }}>🎞️</span>
+            <span className="quick-action-card__icon">☁️</span>
+            <span className="quick-action-card__title">Class Recordings</span>
+            <span className="quick-action-card__desc">Watch all past classes from the cloud</span>
           </button>
         </div>
 
@@ -735,50 +771,110 @@ export default function Dashboard() {
       {/* Recordings Modal */}
       {showRecordingsModal && (
         <div className="modal-overlay" onClick={() => setShowRecordingsModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
             <h3 className="modal__title">Class Recordings</h3>
             <p className="modal__subtitle">Stream or download past sessions directly from Cloudflare R2</p>
 
-            <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto' }}>
+            <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '350px', overflowY: 'auto' }}>
               {isLoadingRecordings ? (
                 <div style={{ textAlign: 'center', padding: '20px' }}>Loading...</div>
               ) : selectedRecordings.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px', color: 'gray' }}>No recordings available for this class.</div>
+                <div style={{ textAlign: 'center', padding: '20px', color: 'gray' }}>No recordings available yet.</div>
               ) : (
                 selectedRecordings.map((rec) => (
                   <div key={rec.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(0,0,0,0.05)', borderRadius: '8px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontWeight: 600 }}>Video Recording</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>{rec.meeting_title || 'Video Recording'}</span>
                       <span style={{ fontSize: '0.8rem', color: 'gray' }}>{new Date(rec.created_at).toLocaleString()}</span>
                       <span style={{ fontSize: '0.75rem', color: rec.status === 'completed' ? 'green' : 'orange' }}>Status: {rec.status}</span>
                     </div>
-                    {rec.status === 'completed' && rec.file_url ? (
-                      <a 
-                        href={rec.file_url} 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="btn-modal-primary"
-                        style={{ padding: '6px 12px', fontSize: '0.85rem', textDecoration: 'none' }}
-                      >
-                        ▶ Watch
-                      </a>
-                    ) : (
-                      <span style={{ fontSize: '0.8rem', color: 'gray' }}>Processing...</span>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {rec.status === 'completed' && rec.file_url ? (
+                        <a 
+                          href={rec.file_url} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          style={{ 
+                            padding: '6px 14px', 
+                            fontSize: '0.85rem', 
+                            fontWeight: 600,
+                            textDecoration: 'none', 
+                            background: '#DC2626',
+                            color: 'white',
+                            borderRadius: '6px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            boxShadow: '0 2px 4px rgba(220, 38, 38, 0.2)'
+                          }}
+                        >
+                          ▶ Watch
+                        </a>
+                      ) : (
+                        <span style={{ fontSize: '0.8rem', color: 'gray', padding: '6px 14px', background: 'rgba(0,0,0,0.05)', borderRadius: '6px' }}>Processing...</span>
+                      )}
+                      
+                      {rec.host_id === user?.id && (
+                        <button 
+                          onClick={() => setDeleteRecordingId(rec.id)}
+                          style={{ 
+                            background: 'none', border: 'none', cursor: 'pointer', 
+                            padding: '8px', color: '#6B7280', borderRadius: '6px',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.background = 'rgba(220,38,38,0.1)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = '#6B7280'; e.currentTarget.style.background = 'none'; }}
+                          title="Delete Recording"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))
               )}
             </div>
 
-            <div className="modal__actions" style={{ marginTop: '20px' }}>
-              <button
-                className="btn-modal-secondary"
-                style={{ width: '100%' }}
-                onClick={() => setShowRecordingsModal(false)}
-              >
-                Close
-              </button>
-            </div>
+            <button
+              onClick={() => setShowRecordingsModal(false)}
+              className="btn-modal-secondary"
+              style={{ width: '100%', marginTop: '16px' }}
+            >
+              Close
+            </button>
+
+            {/* Custom Delete Confirmation Modal overlaying this modal */}
+            {deleteRecordingId && (
+              <div style={{
+                position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                backgroundColor: 'rgba(255,255,255,0.9)',
+                backdropFilter: 'blur(4px)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                borderRadius: '16px', zIndex: 10, padding: '24px', textAlign: 'center'
+              }}>
+                <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: '#FEE2E2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#DC2626', marginBottom: '16px' }}>
+                  <Trash2 size={24} />
+                </div>
+                <h3 style={{ fontSize: '1.25rem', color: '#111827', marginBottom: '8px', fontWeight: 600 }}>Delete Recording?</h3>
+                <p style={{ color: '#4B5563', fontSize: '0.95rem', marginBottom: '24px', lineHeight: 1.5 }}>
+                  This recording will be permanently deleted and cannot be recovered. Students will lose access to it immediately.
+                </p>
+                <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
+                  <button 
+                    onClick={() => setDeleteRecordingId(null)}
+                    style={{ flex: 1, padding: '10px', background: '#F3F4F6', color: '#374151', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={confirmDeleteRecording}
+                    style={{ flex: 1, padding: '10px', background: '#DC2626', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', boxShadow: '0 4px 6px rgba(220, 38, 38, 0.2)' }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

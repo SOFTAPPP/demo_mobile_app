@@ -207,6 +207,21 @@ router.post('/end', async (req: AuthRequest, res: Response): Promise<void> => {
     io.to(cleanRoomCode).emit('meeting-ended');
     io.emit('meeting-ended-global', cleanRoomCode); 
 
+    // Find if there is an active recording
+    const recordings = recordingQueries.getByMeetingId.all(meeting.id) as any[];
+    const activeRecording = recordings.find(r => r.status === 'recording');
+    
+    if (activeRecording) {
+      try {
+        await livekitService.stopRecording(activeRecording.egress_id);
+        recordingQueries.updateStatus.run('completed', activeRecording.egress_id);
+        // Wait 2 seconds for LiveKit to gracefully finalize the MP4 upload before nuking the room
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (err) {
+        console.error('Failed to gracefully stop recording before ending room:', err);
+      }
+    }
+
     // Asynchronously tell LiveKit to kick everyone out and delete the room
     livekitService.endRoom(cleanRoomCode);
     
@@ -274,10 +289,10 @@ router.delete('/:id', (req: AuthRequest, res: Response): void => {
     }
 
     if (meeting.host_id === req.user!.userId) {
-      // Host: delete the meeting and all participant records
-      db.prepare('DELETE FROM meeting_participants WHERE meeting_id = ?').run(id);
+      // Host: Soft delete the meeting so it disappears from the Dashboard list
+      // We purposefully DO NOT delete meeting_participants so students can still view the cloud recording!
       meetingQueries.deleteMeeting.run(id, req.user!.userId);
-      res.json({ message: 'Meeting deleted successfully' });
+      res.json({ message: 'Meeting removed from dashboard successfully' });
     } else {
       // Participant: just remove this meeting from their own history
       const result = db.prepare('DELETE FROM meeting_participants WHERE meeting_id = ? AND user_id = ?').run(id, req.user!.userId);
@@ -363,6 +378,54 @@ router.post('/record/stop', async (req: AuthRequest, res: Response): Promise<voi
   } catch (error: any) {
     console.error('Stop recording error:', error);
     res.status(500).json({ error: error.message || 'Failed to stop recording' });
+  }
+});
+
+/**
+ * DELETE /api/meetings/recordings/:id
+ * Teacher deletes a recording
+ */
+router.delete('/recordings/:id', (req: AuthRequest, res: Response): void => {
+  try {
+    const { id } = req.params;
+    const recording = recordingQueries.findById.get(id) as any;
+    
+    if (!recording) {
+      res.status(404).json({ error: 'Recording not found' });
+      return;
+    }
+
+    const meeting = meetingQueries.findById.get(recording.meeting_id) as any;
+    
+    if (meeting.host_id !== req.user!.userId) {
+      res.status(403).json({ error: 'Only the host can delete this recording' });
+      return;
+    }
+
+    recordingQueries.deleteById.run(id);
+    res.json({ message: 'Recording deleted successfully' });
+  } catch (error) {
+    console.error('Delete recording error:', error);
+    res.status(500).json({ error: 'Failed to delete recording' });
+  }
+});
+
+/**
+ * GET /api/meetings/recordings/all
+ * Fetch all recordings for a user
+ */
+router.get('/recordings/all', (req: AuthRequest, res: Response): void => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const recordings = recordingQueries.getAllForUser.all(userId, userId);
+    res.json({ recordings });
+  } catch (error) {
+    console.error('Get all recordings error:', error);
+    res.status(500).json({ error: 'Failed to fetch recordings' });
   }
 });
 

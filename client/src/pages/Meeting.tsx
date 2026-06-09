@@ -130,19 +130,27 @@ export default function Meeting() {
     });
 
     socket.on('recording-started', (data: { egressId: string }) => {
-      setIsRecording(true);
       setEgressId(data.egressId);
-      playNotificationSound('start');
-      setRecordingToast({ show: true, type: 'start' });
-      setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
+      setIsRecording(prev => {
+        if (!prev) {
+          playNotificationSound('start');
+          setRecordingToast({ show: true, type: 'start' });
+          setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
+        }
+        return true;
+      });
     });
 
     socket.on('recording-stopped', () => {
-      setIsRecording(false);
       setEgressId(null);
-      playNotificationSound('stop');
-      setRecordingToast({ show: true, type: 'stop' });
-      setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
+      setIsRecording(prev => {
+        if (prev) {
+          playNotificationSound('stop');
+          setRecordingToast({ show: true, type: 'stop' });
+          setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
+        }
+        return false;
+      });
     });
 
     return () => {
@@ -259,6 +267,18 @@ export default function Meeting() {
             joinStartTime={location.state?.joinStartTime}
             isRecording={isRecording}
             egressId={egressId}
+            onOptimisticStart={() => {
+              setIsRecording(true);
+              playNotificationSound('start');
+              setRecordingToast({ show: true, type: 'start' });
+              setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
+            }}
+            onOptimisticStop={() => {
+              setIsRecording(false);
+              playNotificationSound('stop');
+              setRecordingToast({ show: true, type: 'stop' });
+              setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
+            }}
           />
           <RoomAudioRenderer />
         </LiveKitRoom>
@@ -277,29 +297,32 @@ export default function Meeting() {
           top: '20px',
           left: '50%',
           transform: 'translateX(-50%)',
-          backgroundColor: 'rgba(0,0,0,0.85)',
+          background: recordingToast.type === 'start' 
+            ? 'linear-gradient(135deg, rgba(220, 38, 38, 0.95) 0%, rgba(185, 28, 28, 0.95) 100%)' 
+            : 'linear-gradient(135deg, rgba(37, 99, 235, 0.95) 0%, rgba(29, 78, 216, 0.95) 100%)',
           color: 'white',
           padding: '16px 24px',
           borderRadius: '12px',
           display: 'flex',
           alignItems: 'center',
-          gap: '12px',
+          gap: '14px',
           zIndex: 9999,
-          boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.3)',
           backdropFilter: 'blur(10px)',
-          animation: 'slideDown 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
+          border: '1px solid rgba(255,255,255,0.2)',
+          animation: 'slideDown 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
         }}>
-          <div style={{ fontSize: '1.5rem', animation: recordingToast.type === 'start' ? 'pulse 1.5s infinite' : 'none' }}>
-            {recordingToast.type === 'start' ? '🔴' : '⏹️'}
+          <div style={{ fontSize: '1.8rem', animation: recordingToast.type === 'start' ? 'pulse 1.5s infinite' : 'none', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }}>
+            {recordingToast.type === 'start' ? '🔴' : '✅'}
           </div>
           <div>
-            <h4 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>
-              Recording {recordingToast.type === 'start' ? 'Started' : 'Stopped'}
+            <h4 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: '#ffffff', letterSpacing: '0.5px' }}>
+              Recording {recordingToast.type === 'start' ? 'Started' : 'Saved'}
             </h4>
-            <p style={{ margin: '4px 0 0 0', fontSize: '0.9rem', color: '#ccc' }}>
+            <p style={{ margin: '4px 0 0 0', fontSize: '0.9rem', color: 'rgba(255,255,255,0.9)' }}>
               {recordingToast.type === 'start' 
                 ? 'This session is now being recorded to the cloud.' 
-                : 'The recording has been saved to your dashboard.'}
+                : 'The recording is now available on your dashboard.'}
             </p>
           </div>
         </div>
@@ -321,7 +344,9 @@ function BrandedMeetingUI({
   onToggleTheme,
   joinStartTime,
   isRecording,
-  egressId
+  egressId,
+  onOptimisticStart,
+  onOptimisticStop
 }: { 
   roomCode: string; 
   meetingTitle: string; 
@@ -333,8 +358,10 @@ function BrandedMeetingUI({
   theme: 'light' | 'maroon';
   onToggleTheme: () => void;
   joinStartTime?: number;
-  isRecording: boolean;
+  isRecording?: boolean;
   egressId: string | null;
+  onOptimisticStart?: () => void;
+  onOptimisticStop?: () => void;
 }) {
   const room = useRoomContext();
   const connectionState = useConnectionState();
@@ -439,11 +466,18 @@ function BrandedMeetingUI({
     { onlySubscribed: false }
   );
 
+  const [recElapsed, setRecElapsed] = useState(0);
+
   // Timer
   useEffect(() => {
-    const timer = setInterval(() => setElapsed((p) => p + 1), 1000);
+    let timer: any;
+    if (isRecording) {
+      timer = setInterval(() => setRecElapsed((p) => p + 1), 1000);
+    } else {
+      setRecElapsed(0);
+    }
     return () => clearInterval(timer);
-  }, []);
+  }, [isRecording]);
 
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -502,13 +536,22 @@ function BrandedMeetingUI({
     try {
       setIsRecordLoading(true);
       if (isRecording && egressId) {
+        if (onOptimisticStop) onOptimisticStop();
         await api.post('/meetings/record/stop', { egressId });
       } else {
+        if (onOptimisticStart) onOptimisticStart();
         await api.post('/meetings/record/start', { roomCode });
       }
     } catch (e: any) {
       console.error('Failed to toggle recording', e);
       alert(e.response?.data?.error || 'Failed to toggle recording.');
+      
+      // Revert optimistic UI on failure
+      if (isRecording) {
+        if (onOptimisticStart) onOptimisticStart();
+      } else {
+        if (onOptimisticStop) onOptimisticStop();
+      }
     } finally {
       setIsRecordLoading(false);
     }
@@ -553,19 +596,20 @@ function BrandedMeetingUI({
           </span>
           {isRecording && (
             <span style={{
-              fontSize: '0.7rem',
-              background: 'rgba(220, 38, 38, 0.2)',
+              fontSize: '0.75rem',
+              background: 'rgba(220, 38, 38, 0.15)',
               color: '#EF4444',
-              padding: '2px 8px',
-              borderRadius: '4px',
-              fontWeight: 600,
+              padding: '4px 10px',
+              borderRadius: '6px',
+              fontWeight: 700,
               display: 'flex',
               alignItems: 'center',
-              gap: '4px',
+              gap: '6px',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
               animation: 'pulse 2s infinite'
             }}>
               <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#EF4444' }} />
-              REC
+              REC {formatTime(recElapsed)}
             </span>
           )}
         </div>

@@ -116,6 +116,13 @@ export interface Recording {
   created_at: string;
 }
 
+// Add is_deleted column to meetings for soft-deleting
+try {
+  db.exec(`ALTER TABLE meetings ADD COLUMN is_deleted INTEGER DEFAULT 0;`);
+} catch (e) {
+  // Column already exists, ignore
+}
+
 // User queries
 export const userQueries: Record<string, Statement> = {
   create: db.prepare(`
@@ -137,25 +144,25 @@ export const meetingQueries: Record<string, Statement> = {
     INSERT INTO meetings (id, room_code, title, host_id, max_participants, scheduled_for)
     VALUES (?, ?, ?, ?, ?, ?)
   `),
-  findByCode: db.prepare(`SELECT * FROM meetings WHERE room_code = ?`),
+  findByCode: db.prepare(`SELECT * FROM meetings WHERE room_code = ? AND is_deleted = 0`),
   findById: db.prepare(`SELECT * FROM meetings WHERE id = ?`),
-  getActiveByHost: db.prepare(`SELECT * FROM meetings WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NULL`),
+  getActiveByHost: db.prepare(`SELECT * FROM meetings WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NULL AND is_deleted = 0`),
   getRecent: db.prepare(`
     SELECT DISTINCT m.* FROM meetings m
     LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id
-    WHERE (m.host_id = ? AND (m.scheduled_for IS NULL OR m.is_active = 0)) 
-       OR (mp.user_id = ?)
+    WHERE m.is_deleted = 0 AND ((m.host_id = ? AND (m.scheduled_for IS NULL OR m.is_active = 0)) 
+       OR (mp.user_id = ?))
     ORDER BY m.created_at DESC
     LIMIT 10
   `),
   getScheduled: db.prepare(`
     SELECT * FROM meetings 
-    WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NOT NULL 
+    WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NOT NULL AND is_deleted = 0
     ORDER BY scheduled_for ASC
   `),
   endMeeting: db.prepare(`UPDATE meetings SET is_active = 0, ended_at = datetime('now') WHERE room_code = ?`),
-  getActive: db.prepare(`SELECT * FROM meetings WHERE is_active = 1 AND scheduled_for IS NULL`),
-  deleteMeeting: db.prepare(`DELETE FROM meetings WHERE id = ? AND host_id = ?`),
+  getActive: db.prepare(`SELECT * FROM meetings WHERE is_active = 1 AND scheduled_for IS NULL AND is_deleted = 0`),
+  deleteMeeting: db.prepare(`UPDATE meetings SET is_deleted = 1 WHERE id = ? AND host_id = ?`),
 };
 
 // Recording queries
@@ -168,6 +175,16 @@ export const recordingQueries: Record<string, Statement> = {
     UPDATE recordings SET status = ? WHERE egress_id = ?
   `),
   getByMeetingId: db.prepare(`SELECT * FROM recordings WHERE meeting_id = ? ORDER BY created_at DESC`),
+  getAllForUser: db.prepare(`
+    SELECT DISTINCT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
+    FROM recordings r
+    JOIN meetings m ON r.meeting_id = m.id
+    LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id
+    WHERE m.host_id = ? OR mp.user_id = ?
+    ORDER BY r.created_at DESC
+  `),
+  deleteById: db.prepare(`DELETE FROM recordings WHERE id = ?`),
+  findById: db.prepare(`SELECT * FROM recordings WHERE id = ?`),
 };
 
 export default db;
