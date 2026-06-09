@@ -64,6 +64,19 @@ db.exec(`
   )
 `);
 
+// Create recordings table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS recordings (
+    id TEXT PRIMARY KEY,
+    meeting_id TEXT NOT NULL,
+    egress_id TEXT NOT NULL,
+    status TEXT DEFAULT 'recording',
+    file_url TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+  )
+`);
+
 // Add Performance Indices
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_meetings_host ON meetings(host_id);
@@ -92,6 +105,15 @@ export interface Meeting {
   created_at: string;
   ended_at: string | null;
   scheduled_for: string | null;
+}
+
+export interface Recording {
+  id: string;
+  meeting_id: string;
+  egress_id: string;
+  status: 'recording' | 'completed' | 'failed';
+  file_url: string | null;
+  created_at: string;
 }
 
 // User queries
@@ -134,6 +156,18 @@ export const meetingQueries: Record<string, Statement> = {
   endMeeting: db.prepare(`UPDATE meetings SET is_active = 0, ended_at = datetime('now') WHERE room_code = ?`),
   getActive: db.prepare(`SELECT * FROM meetings WHERE is_active = 1 AND scheduled_for IS NULL`),
   deleteMeeting: db.prepare(`DELETE FROM meetings WHERE id = ? AND host_id = ?`),
+};
+
+// Recording queries
+export const recordingQueries: Record<string, Statement> = {
+  create: db.prepare(`
+    INSERT INTO recordings (id, meeting_id, egress_id, status, file_url)
+    VALUES (?, ?, ?, ?, ?)
+  `),
+  updateStatus: db.prepare(`
+    UPDATE recordings SET status = ? WHERE egress_id = ?
+  `),
+  getByMeetingId: db.prepare(`SELECT * FROM recordings WHERE meeting_id = ? ORDER BY created_at DESC`),
 };
 
 export default db;

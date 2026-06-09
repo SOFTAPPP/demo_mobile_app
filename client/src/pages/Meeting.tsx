@@ -12,11 +12,47 @@ import {
 } from '@livekit/components-react';
 import { Track, RoomOptions, VideoPresets, RoomEvent } from 'livekit-client';
 import { useAuth } from '../context/AuthContext';
-import { Mic, MicOff, Video as VideoIcon, VideoOff, Users, PhoneOff, LogOut, Signal, SignalHigh, SignalLow, SignalMedium, Palette } from 'lucide-react';
+import { Mic, MicOff, Video as VideoIcon, VideoOff, Users, PhoneOff, LogOut, Signal, SignalHigh, SignalLow, SignalMedium, Palette, Disc, Square } from 'lucide-react';
 import { io as socketIO } from 'socket.io-client';
 import api from '../services/api';
-import { roomOptions, getSharedRoom, clearSharedRoom } from '../services/livekitPrewarm';
+import { prepareLiveKitRoom, clearSharedRoom, getSharedRoom, roomOptions } from '../services/livekitPrewarm';
 import '../styles/meeting.css';
+
+// Audio helper for nice chimes
+const playNotificationSound = (type: 'start' | 'stop') => {
+  try {
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    
+    if (type === 'start') {
+      // Happy rising chime
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // A4
+      oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1); // A5
+      gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + 0.05);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      oscillator.start(audioCtx.currentTime);
+      oscillator.stop(audioCtx.currentTime + 0.3);
+    } else {
+      // Gentle falling chime
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
+      oscillator.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.15); // A4
+      gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + 0.05);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      oscillator.start(audioCtx.currentTime);
+      oscillator.stop(audioCtx.currentTime + 0.3);
+    }
+  } catch(e) {
+    console.log("Audio not supported or blocked", e);
+  }
+};
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
   constructor(props: any) {
@@ -71,6 +107,9 @@ export default function Meeting() {
   const [connectionError, setConnectionError] = useState<string>('');
   const [theme, setTheme] = useState<'light' | 'maroon'>('light');
   const [isHost, setIsHost] = useState(!!location.state?.isHost);
+  const [isRecording, setIsRecording] = useState(false);
+  const [egressId, setEgressId] = useState<string | null>(null);
+  const [recordingToast, setRecordingToast] = useState<{show: boolean, type: 'start' | 'stop' | null}>({show: false, type: null});
   const prewarmedRoom = useRef(getSharedRoom());
 
   // Socket.io for instant teardown
@@ -88,6 +127,22 @@ export default function Meeting() {
       socket.disconnect();
       clearSharedRoom();
       navigate('/meeting-ended', { state: { roomCode } });
+    });
+
+    socket.on('recording-started', (data: { egressId: string }) => {
+      setIsRecording(true);
+      setEgressId(data.egressId);
+      playNotificationSound('start');
+      setRecordingToast({ show: true, type: 'start' });
+      setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
+    });
+
+    socket.on('recording-stopped', () => {
+      setIsRecording(false);
+      setEgressId(null);
+      playNotificationSound('stop');
+      setRecordingToast({ show: true, type: 'stop' });
+      setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
     });
 
     return () => {
@@ -202,10 +257,53 @@ export default function Meeting() {
             theme={theme}
             onToggleTheme={() => setTheme(t => t === 'light' ? 'maroon' : 'light')}
             joinStartTime={location.state?.joinStartTime}
+            isRecording={isRecording}
+            egressId={egressId}
           />
           <RoomAudioRenderer />
         </LiveKitRoom>
       </div>
+
+      {/* Recording Toast Overlay */}
+      <style>{`
+        @keyframes slideDown {
+          from { top: -100px; opacity: 0; }
+          to { top: 20px; opacity: 1; }
+        }
+      `}</style>
+      {recordingToast.show && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          backgroundColor: 'rgba(0,0,0,0.85)',
+          color: 'white',
+          padding: '16px 24px',
+          borderRadius: '12px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          zIndex: 9999,
+          boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
+          backdropFilter: 'blur(10px)',
+          animation: 'slideDown 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
+        }}>
+          <div style={{ fontSize: '1.5rem', animation: recordingToast.type === 'start' ? 'pulse 1.5s infinite' : 'none' }}>
+            {recordingToast.type === 'start' ? '🔴' : '⏹️'}
+          </div>
+          <div>
+            <h4 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>
+              Recording {recordingToast.type === 'start' ? 'Started' : 'Stopped'}
+            </h4>
+            <p style={{ margin: '4px 0 0 0', fontSize: '0.9rem', color: '#ccc' }}>
+              {recordingToast.type === 'start' 
+                ? 'This session is now being recorded to the cloud.' 
+                : 'The recording has been saved to your dashboard.'}
+            </p>
+          </div>
+        </div>
+      )}
     </ErrorBoundary>
   );
 }
@@ -221,7 +319,9 @@ function BrandedMeetingUI({
   clearConnectionError,
   theme,
   onToggleTheme,
-  joinStartTime
+  joinStartTime,
+  isRecording,
+  egressId
 }: { 
   roomCode: string; 
   meetingTitle: string; 
@@ -233,6 +333,8 @@ function BrandedMeetingUI({
   theme: 'light' | 'maroon';
   onToggleTheme: () => void;
   joinStartTime?: number;
+  isRecording: boolean;
+  egressId: string | null;
 }) {
   const room = useRoomContext();
   const connectionState = useConnectionState();
@@ -241,6 +343,7 @@ function BrandedMeetingUI({
   const [elapsed, setElapsed] = useState(0);
   const [showParticipants, setShowParticipants] = useState(false);
   const [musicMode, setMusicMode] = useState(false); // Default to standard mode
+  const [isRecordLoading, setIsRecordLoading] = useState(false);
 
   // Synthesize a nice chime without needing any audio files
   const playTone = useCallback((type: 'join' | 'leave') => {
@@ -395,6 +498,22 @@ function BrandedMeetingUI({
                     tracks.length <= 2 ? 'video-grid--2' : 
                     tracks.length <= 4 ? 'video-grid--4' : 'video-grid--many';
 
+  const handleRecordToggle = async () => {
+    try {
+      setIsRecordLoading(true);
+      if (isRecording && egressId) {
+        await api.post('/meetings/record/stop', { egressId });
+      } else {
+        await api.post('/meetings/record/start', { roomCode });
+      }
+    } catch (e: any) {
+      console.error('Failed to toggle recording', e);
+      alert(e.response?.data?.error || 'Failed to toggle recording.');
+    } finally {
+      setIsRecordLoading(false);
+    }
+  };
+
   return (
     <div className="meeting-room" style={{ height: '100dvh', width: '100%' }}>
       {/* Connection Error Banner */}
@@ -432,6 +551,23 @@ function BrandedMeetingUI({
           }}>
             LIVE
           </span>
+          {isRecording && (
+            <span style={{
+              fontSize: '0.7rem',
+              background: 'rgba(220, 38, 38, 0.2)',
+              color: '#EF4444',
+              padding: '2px 8px',
+              borderRadius: '4px',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              animation: 'pulse 2s infinite'
+            }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#EF4444' }} />
+              REC
+            </span>
+          )}
         </div>
         <div className="meeting-room__header-right">
           <button className="theme-toggle-btn" onClick={onToggleTheme} title="Toggle Theme">
@@ -558,12 +694,25 @@ function BrandedMeetingUI({
           </button>
 
           {isHost && (
-            <div className="host-controls">
+            <>
+              <button 
+                className={`control-btn ${isRecording ? 'control-btn--active' : 'control-btn--default'}`} 
+                onClick={handleRecordToggle}
+                disabled={isRecordLoading}
+                style={isRecording 
+                  ? { background: '#DC2626', color: 'white', borderColor: '#DC2626', animation: 'pulse 2s infinite' } 
+                  : { background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.3)' }
+                }
+              >
+                {isRecording ? <Square size={22} fill="currentColor" /> : <Disc size={22} />}
+                <span className="control-btn__tooltip">{isRecording ? 'Stop Recording' : 'Record Class'}</span>
+              </button>
+
               <button className="control-btn control-btn--end" onClick={() => setConfirmAction('end')}>
                 <PhoneOff size={22} />
                 <span className="control-btn__tooltip">End for All</span>
               </button>
-            </div>
+            </>
           )}
         </div>
       </div>

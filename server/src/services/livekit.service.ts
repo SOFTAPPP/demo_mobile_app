@@ -1,4 +1,4 @@
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, EgressClient, EncodedFileOutput, S3Upload, EncodedFileType } from 'livekit-server-sdk';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 
@@ -80,5 +80,57 @@ export const livekitService = {
     } catch (error) {
       console.error(`Failed to delete LiveKit room ${roomName}:`, error);
     }
+  },
+
+  /**
+   * Start recording a LiveKit room and upload directly to Cloudflare R2
+   */
+  async startRecording(roomName: string): Promise<{ egressId: string; fileUrl: string }> {
+    if (!this.isConfigured()) throw new Error('LiveKit is not configured');
+    if (!process.env.S3_ACCESS_KEY || !process.env.S3_SECRET_KEY || !process.env.S3_ENDPOINT || !process.env.S3_BUCKET) {
+      throw new Error('Cloudflare R2 credentials are not fully configured in .env');
+    }
+
+    const { apiKey, apiSecret, url } = config.livekit;
+    const httpUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
+    const egressClient = new EgressClient(httpUrl, apiKey, apiSecret);
+
+    const timestamp = Date.now();
+    const fileName = `recordings/${roomName}-${timestamp}.mp4`;
+
+    const s3Upload = new S3Upload({
+      accessKey: process.env.S3_ACCESS_KEY,
+      secret: process.env.S3_SECRET_KEY,
+      endpoint: process.env.S3_ENDPOINT,
+      bucket: process.env.S3_BUCKET,
+    });
+
+    const fileOutput = new EncodedFileOutput({
+      filepath: fileName,
+      fileType: EncodedFileType.MP4,
+      output: { case: 's3', value: s3Upload },
+    });
+
+    const info = await egressClient.startRoomCompositeEgress(roomName, {
+      file: fileOutput,
+    });
+
+    const publicUrl = process.env.S3_PUBLIC_URL || '';
+    const fileUrl = publicUrl ? `${publicUrl}/${fileName}` : fileName;
+
+    return { egressId: info.egressId as string, fileUrl };
+  },
+
+  /**
+   * Stop a recording
+   */
+  async stopRecording(egressId: string): Promise<void> {
+    if (!this.isConfigured()) return;
+    
+    const { apiKey, apiSecret, url } = config.livekit;
+    const httpUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
+    const egressClient = new EgressClient(httpUrl, apiKey, apiSecret);
+
+    await egressClient.stopEgress(egressId);
   }
 };

@@ -20,6 +20,9 @@ export default function Dashboard() {
   const [scheduledMeetings, setScheduledMeetings] = useState<Meeting[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [showRecordingsModal, setShowRecordingsModal] = useState(false);
+  const [selectedRecordings, setSelectedRecordings] = useState<any[]>([]);
+  const [isLoadingRecordings, setIsLoadingRecordings] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState('');
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
@@ -61,8 +64,7 @@ export default function Dashboard() {
   }, []);
 
   // Fetch recent and scheduled meetings
-  useEffect(() => {
-    const fetchMeetings = async () => {
+  const fetchMeetings = async () => {
       try {
         const [recentRes, scheduledRes] = await Promise.all([
           api.get('/meetings/recent'),
@@ -73,7 +75,9 @@ export default function Dashboard() {
       } catch {
         // Not critical — ignore
       }
-    };
+  };
+
+  useEffect(() => {
     fetchMeetings();
   }, []);
 
@@ -230,13 +234,26 @@ export default function Dashboard() {
       setRecentMeetings(prev => prev.filter(m => m.id !== meetingToDelete));
     } catch (err: any) {
       if (err.response?.status === 404) {
-        // Meeting is already deleted on the server (e.g. by another window), so just remove it from UI
         setRecentMeetings(prev => prev.filter(m => m.id !== meetingToDelete));
       } else {
         setAlertMessage(err.response?.data?.error || 'Failed to delete meeting');
       }
     } finally {
       setMeetingToDelete(null);
+    }
+  };
+
+  const handleViewRecordings = async (meetingId: string) => {
+    setShowRecordingsModal(true);
+    setIsLoadingRecordings(true);
+    setSelectedRecordings([]);
+    try {
+      const { data } = await api.get(`/meetings/${meetingId}/recordings`);
+      setSelectedRecordings(data.recordings || []);
+    } catch (err) {
+      console.error('Failed to fetch recordings', err);
+    } finally {
+      setIsLoadingRecordings(false);
     }
   };
 
@@ -511,6 +528,13 @@ export default function Dashboard() {
                   {meeting.is_active ? '● Live' : 'Ended'}
                 </span>
                 <button 
+                  onClick={(e) => { e.stopPropagation(); handleViewRecordings(meeting.id); }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', marginLeft: '10px' }}
+                  title="View Recordings"
+                >
+                  🎞️
+                </button>
+                <button 
                   onClick={(e) => { e.stopPropagation(); handleDeleteMeeting(meeting.id); }}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', marginLeft: '10px' }}
                   title="Delete Meeting"
@@ -702,6 +726,57 @@ export default function Dashboard() {
                 onClick={confirmDelete}
               >
                 Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recordings Modal */}
+      {showRecordingsModal && (
+        <div className="modal-overlay" onClick={() => setShowRecordingsModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal__title">Class Recordings</h3>
+            <p className="modal__subtitle">Stream or download past sessions directly from Cloudflare R2</p>
+
+            <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto' }}>
+              {isLoadingRecordings ? (
+                <div style={{ textAlign: 'center', padding: '20px' }}>Loading...</div>
+              ) : selectedRecordings.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: 'gray' }}>No recordings available for this class.</div>
+              ) : (
+                selectedRecordings.map((rec) => (
+                  <div key={rec.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(0,0,0,0.05)', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontWeight: 600 }}>Video Recording</span>
+                      <span style={{ fontSize: '0.8rem', color: 'gray' }}>{new Date(rec.created_at).toLocaleString()}</span>
+                      <span style={{ fontSize: '0.75rem', color: rec.status === 'completed' ? 'green' : 'orange' }}>Status: {rec.status}</span>
+                    </div>
+                    {rec.status === 'completed' && rec.file_url ? (
+                      <a 
+                        href={rec.file_url} 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="btn-modal-primary"
+                        style={{ padding: '6px 12px', fontSize: '0.85rem', textDecoration: 'none' }}
+                      >
+                        ▶ Watch
+                      </a>
+                    ) : (
+                      <span style={{ fontSize: '0.8rem', color: 'gray' }}>Processing...</span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="modal__actions" style={{ marginTop: '20px' }}>
+              <button
+                className="btn-modal-secondary"
+                style={{ width: '100%' }}
+                onClick={() => setShowRecordingsModal(false)}
+              >
+                Close
               </button>
             </div>
           </div>
