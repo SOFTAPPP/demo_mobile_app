@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import { Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
-import { Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
-import { prepareLiveKitRoom, clearSharedRoom } from '../services/livekitPrewarm';
-import type { Meeting } from '../types';
+import { clearSharedRoom, prepareLiveKitRoom } from '../services/livekitPrewarm';
 import '../styles/dashboard.css';
+import type { Meeting } from '../types';
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -30,6 +30,7 @@ export default function Dashboard() {
   const [scheduleTime, setScheduleTime] = useState('');
   const [meetingToDelete, setMeetingToDelete] = useState<string | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [currentTime, setCurrentTime] = useState(Date.now());
 
   // Update current time every second to auto-enable start buttons and power the live clock
@@ -52,10 +53,10 @@ export default function Dashboard() {
     const socket = io(socketUrl);
 
     socket.on('meeting-ended-global', (endedRoomCode: string) => {
-      setRecentMeetings(prev => 
+      setRecentMeetings(prev =>
         prev.map(m => m.room_code === endedRoomCode ? { ...m, is_active: 0 } : m)
       );
-      setScheduledMeetings(prev => 
+      setScheduledMeetings(prev =>
         prev.map(m => m.room_code === endedRoomCode ? { ...m, is_active: 0 } : m)
       );
     });
@@ -67,16 +68,16 @@ export default function Dashboard() {
 
   // Fetch recent and scheduled meetings
   const fetchMeetings = async () => {
-      try {
-        const [recentRes, scheduledRes] = await Promise.all([
-          api.get('/meetings/recent'),
-          api.get('/meetings/scheduled')
-        ]);
-        setRecentMeetings(recentRes.data.meetings || []);
-        setScheduledMeetings(scheduledRes.data.meetings || []);
-      } catch {
-        // Not critical — ignore
-      }
+    try {
+      const [recentRes, scheduledRes] = await Promise.all([
+        api.get('/meetings/recent'),
+        api.get('/meetings/scheduled')
+      ]);
+      setRecentMeetings(recentRes.data.meetings || []);
+      setScheduledMeetings(scheduledRes.data.meetings || []);
+    } catch {
+      // Not critical — ignore
+    }
   };
 
   useEffect(() => {
@@ -104,7 +105,7 @@ export default function Dashboard() {
     setAlertMessage('');
     const joinStartTime = performance.now();
     console.log(`[⏱️ Profiling] 1. "Create Meeting" clicked at 0ms`);
-    
+
     try {
       // PROFILING OPTIMIZATION: Eagerly prefetch the massive WebRTC Meeting component bundle 
       // *in parallel* with the API request. This completely eliminates the lazy-load delay!
@@ -120,7 +121,7 @@ export default function Dashboard() {
 
       // We do NOT await prefetchMeeting here. We want to navigate immediately and let 
       // React.Suspense handle the loading state, so the UI feels instantly responsive!
-      
+
       navigate(`/meeting/${data.meeting.room_code}`, {
         state: {
           meeting: data.meeting,
@@ -146,7 +147,7 @@ export default function Dashboard() {
     setJoinError('');
     const joinStartTime = performance.now();
     console.log(`[⏱️ Profiling] 1. "Join Meeting" clicked at 0ms`);
-    
+
     try {
       // PROFILING OPTIMIZATION: Parallel prefetch of the heavy WebRTC chunk
       const prefetchMeeting = import('./Meeting');
@@ -156,12 +157,12 @@ export default function Dashboard() {
         displayName: user?.name,
       });
       console.log(`[⏱️ Profiling] 2. API /join responded in ${(performance.now() - joinStartTime).toFixed(0)}ms`);
-      
+
       // PROFILING OPTIMIZATION: Start WebRTC background negotiation BEFORE React even navigates
       prepareLiveKitRoom(data.livekit.url, data.livekit.token);
 
       // We do NOT await prefetchMeeting here. We navigate immediately!
-      
+
       navigate(`/meeting/${data.meeting.room_code}`, {
         state: {
           meeting: data.meeting,
@@ -281,7 +282,7 @@ export default function Dashboard() {
       setDeleteRecordingId(null);
     } catch (err: any) {
       console.error('Failed to delete recording', err);
-      alert(err.response?.data?.error || 'Failed to delete recording');
+      setAlertMessage(err.response?.data?.error || 'Failed to delete recording');
       setDeleteRecordingId(null);
     }
   };
@@ -363,14 +364,10 @@ export default function Dashboard() {
               <div className="sidebar__user-name">{user?.name}</div>
               <div className="sidebar__user-role">{user?.role}</div>
             </div>
-            <button 
-              className="sidebar__logout" 
-              onClick={() => {
-                if (window.confirm("Are you sure you want to log out?")) {
-                  logout();
-                }
-              }} 
-              title="Logout" 
+            <button
+              className="sidebar__logout"
+              onClick={() => setShowLogoutConfirm(true)}
+              title="Logout"
               id="logout-btn"
             >
               🚪
@@ -390,7 +387,7 @@ export default function Dashboard() {
             </h1>
             <p className="dashboard__date">{getDate()}</p>
           </div>
-          
+
           <div className="dashboard__live-clock" style={{
             fontSize: '1.1rem',
             fontFamily: 'var(--font-heading)',
@@ -408,13 +405,13 @@ export default function Dashboard() {
             gap: '12px',
             letterSpacing: '1px'
           }}>
-            <span style={{ 
-              width: '8px', 
-              height: '8px', 
-              borderRadius: '50%', 
-              backgroundColor: '#E53E3E', 
+            <span style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: '#E53E3E',
               boxShadow: '0 0 8px rgba(229, 62, 62, 0.5)',
-              animation: 'pulse 2s infinite' 
+              animation: 'pulse 2s infinite'
             }}></span>
             {new Date(currentTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
           </div>
@@ -455,7 +452,7 @@ export default function Dashboard() {
             <span className="quick-action-card__bg-icon" style={{ opacity: 0.1 }}>🎞️</span>
             <span className="quick-action-card__icon">☁️</span>
             <span className="quick-action-card__title">Class Recordings</span>
-            <span className="quick-action-card__desc">Watch all past classes from the cloud</span>
+            <span className="quick-action-card__desc">Watch all past classes</span>
           </button>
         </div>
 
@@ -504,9 +501,9 @@ export default function Dashboard() {
                   <span className="meeting-item__code">{meeting.room_code}</span>
                   <button
                     className="btn-modal-primary"
-                    style={{ 
-                      padding: '8px 20px', 
-                      fontSize: '13px', 
+                    style={{
+                      padding: '8px 20px',
+                      fontSize: '13px',
                       marginLeft: 'auto',
                       flex: '0 0 auto',
                       width: 'auto',
@@ -520,7 +517,7 @@ export default function Dashboard() {
                   >
                     ▶ Start Class
                   </button>
-                  <button 
+                  <button
                     onClick={(e) => { e.stopPropagation(); handleDeleteMeeting(meeting.id); }}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', marginLeft: '10px' }}
                     title="Delete Scheduled Meeting"
@@ -557,20 +554,19 @@ export default function Dashboard() {
                 </div>
                 <span className="meeting-item__code">{meeting.room_code}</span>
                 <span
-                  className={`meeting-item__status ${
-                    meeting.is_active ? 'meeting-item__status--active' : 'meeting-item__status--ended'
-                  }`}
+                  className={`meeting-item__status ${meeting.is_active ? 'meeting-item__status--active' : 'meeting-item__status--ended'
+                    }`}
                 >
                   {meeting.is_active ? '● Live' : 'Ended'}
                 </span>
-                <button 
+                <button
                   onClick={(e) => { e.stopPropagation(); handleViewRecordings(meeting.id); }}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', marginLeft: '10px' }}
                   title="View Recordings"
                 >
                   🎞️
                 </button>
-                <button 
+                <button
                   onClick={(e) => { e.stopPropagation(); handleDeleteMeeting(meeting.id); }}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', marginLeft: '10px' }}
                   title="Delete Meeting"
@@ -790,15 +786,15 @@ export default function Dashboard() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       {rec.status === 'completed' && rec.file_url ? (
-                        <a 
-                          href={rec.file_url} 
-                          target="_blank" 
+                        <a
+                          href={rec.file_url}
+                          target="_blank"
                           rel="noreferrer"
-                          style={{ 
-                            padding: '6px 14px', 
-                            fontSize: '0.85rem', 
+                          style={{
+                            padding: '6px 14px',
+                            fontSize: '0.85rem',
                             fontWeight: 600,
-                            textDecoration: 'none', 
+                            textDecoration: 'none',
                             background: '#DC2626',
                             color: 'white',
                             borderRadius: '6px',
@@ -813,12 +809,12 @@ export default function Dashboard() {
                       ) : (
                         <span style={{ fontSize: '0.8rem', color: 'gray', padding: '6px 14px', background: 'rgba(0,0,0,0.05)', borderRadius: '6px' }}>Processing...</span>
                       )}
-                      
+
                       {rec.host_id === user?.id && (
-                        <button 
+                        <button
                           onClick={() => setDeleteRecordingId(rec.id)}
-                          style={{ 
-                            background: 'none', border: 'none', cursor: 'pointer', 
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
                             padding: '8px', color: '#6B7280', borderRadius: '6px',
                             display: 'flex', alignItems: 'center', justifyContent: 'center'
                           }}
@@ -860,13 +856,13 @@ export default function Dashboard() {
                   This recording will be permanently deleted and cannot be recovered. Students will lose access to it immediately.
                 </p>
                 <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
-                  <button 
+                  <button
                     onClick={() => setDeleteRecordingId(null)}
                     style={{ flex: 1, padding: '10px', background: '#F3F4F6', color: '#374151', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}
                   >
                     Cancel
                   </button>
-                  <button 
+                  <button
                     onClick={confirmDeleteRecording}
                     style={{ flex: 1, padding: '10px', background: '#DC2626', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', boxShadow: '0 4px 6px rgba(220, 38, 38, 0.2)' }}
                   >
@@ -875,6 +871,36 @@ export default function Dashboard() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirm && (
+        <div className="modal-overlay" onClick={() => setShowLogoutConfirm(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center', padding: '32px 24px', maxWidth: '340px' }}>
+            <h3 style={{ fontSize: '1.25rem', color: '#111827', marginBottom: '8px', fontWeight: 600 }}>Log Out?</h3>
+            <p style={{ color: '#4B5563', fontSize: '0.95rem', marginBottom: '24px', lineHeight: 1.5 }}>
+              Are you sure you want to log out of your account?
+            </p>
+            <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
+              <button 
+                onClick={() => setShowLogoutConfirm(false)}
+                style={{ flex: 1, padding: '10px', background: '#F3F4F6', color: '#374151', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => {
+                  setShowLogoutConfirm(false);
+                  logout();
+                  navigate('/login');
+                }}
+                style={{ flex: 1, padding: '10px', background: '#DC2626', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', boxShadow: '0 4px 6px rgba(220, 38, 38, 0.2)' }}
+              >
+                Log Out
+              </button>
+            </div>
           </div>
         </div>
       )}

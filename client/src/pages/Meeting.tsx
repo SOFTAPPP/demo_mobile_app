@@ -10,7 +10,7 @@ import {
   VideoTrack,
   useConnectionState,
 } from '@livekit/components-react';
-import { Track, RoomOptions, VideoPresets, RoomEvent } from 'livekit-client';
+import { Track, RoomOptions, VideoPresets, RoomEvent, LocalAudioTrack } from 'livekit-client';
 import { useAuth } from '../context/AuthContext';
 import { Mic, MicOff, Video as VideoIcon, VideoOff, Users, PhoneOff, LogOut, Signal, SignalHigh, SignalLow, SignalMedium, Palette, Disc, Square } from 'lucide-react';
 import { io as socketIO } from 'socket.io-client';
@@ -435,6 +435,7 @@ function BrandedMeetingUI({
   
   // Confirmation Modal State
   const [confirmAction, setConfirmAction] = useState<'leave' | 'end' | null>(null);
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
   const displayMic = optimisticMic !== null ? optimisticMic : isMicrophoneEnabled;
   const displayCam = optimisticCam !== null ? optimisticCam : isCameraEnabled;
@@ -540,11 +541,45 @@ function BrandedMeetingUI({
         await api.post('/meetings/record/stop', { egressId });
       } else {
         if (onOptimisticStart) onOptimisticStart();
+        
+        // FAKE TRACK LOGIC: LiveKit Cloud Egress waits for at least 1 track before it starts recording.
+        // To force it to record instantly even if the host's mic and camera are OFF, we count tracks.
+        let totalTracks = 0;
+        room.remoteParticipants.forEach((p) => { totalTracks += p.trackPublications.size; });
+        totalTracks += room.localParticipant.trackPublications.size;
+        
+        if (totalTracks === 0) {
+          try {
+            // Generate a 100% silent audio track using Web Audio API (does NOT prompt user for permissions!)
+            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const oscillator = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+            gainNode.gain.value = 0; // 0 volume = complete silence
+            const dst = ctx.createMediaStreamDestination();
+            oscillator.connect(gainNode);
+            gainNode.connect(dst);
+            oscillator.start();
+            
+            const track = dst.stream.getAudioTracks()[0];
+            const dummyTrack = new LocalAudioTrack(track);
+            // Publish as Unknown source so the UI doesn't show a Microphone icon!
+            await room.localParticipant.publishTrack(dummyTrack, { name: 'silence', source: Track.Source.Unknown });
+            
+            // The Egress server will detect the track and start recording instantly.
+            // We can safely unpublish it after 10 seconds because the Egress will have fully booted up.
+            setTimeout(() => {
+              room.localParticipant.unpublishTrack(dummyTrack).catch(console.error);
+            }, 10000);
+          } catch(e) {
+            console.log('Failed to create dummy track', e);
+          }
+        }
+
         await api.post('/meetings/record/start', { roomCode });
       }
     } catch (e: any) {
       console.error('Failed to toggle recording', e);
-      alert(e.response?.data?.error || 'Failed to toggle recording.');
+      setAlertMessage(e.response?.data?.error || 'Failed to toggle recording.');
       
       // Revert optimistic UI on failure
       if (isRecording) {
@@ -808,6 +843,24 @@ function BrandedMeetingUI({
                 {confirmAction === 'end' ? 'End Call' : 'Leave'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Alert Modal */}
+      {alertMessage && (
+        <div className="modal-overlay" onClick={() => setAlertMessage(null)} style={{ position: 'fixed', zIndex: 9999, top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ background: 'white', padding: '32px 24px', borderRadius: '16px', maxWidth: '340px', width: '90%', textAlign: 'center', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}>
+            <h3 style={{ fontSize: '1.25rem', color: '#111827', marginBottom: '8px', fontWeight: 600 }}>Notice</h3>
+            <p style={{ color: '#4B5563', fontSize: '0.95rem', marginBottom: '24px', lineHeight: 1.5 }}>
+              {alertMessage}
+            </p>
+            <button 
+              onClick={() => setAlertMessage(null)}
+              style={{ width: '100%', padding: '10px', background: '#F3F4F6', color: '#374151', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              OK
+            </button>
           </div>
         </div>
       )}
