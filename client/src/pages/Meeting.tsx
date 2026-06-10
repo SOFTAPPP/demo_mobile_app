@@ -130,16 +130,26 @@ export default function Meeting() {
     });
 
     socket.on('recording-started', () => {
-      setIsRecording(true);
-      setRecordingToast({ show: true, type: 'start' });
-      playNotificationSound('start');
+      setIsRecording((prev) => {
+        if (!prev) {
+          setRecordingToast({ show: true, type: 'start' });
+          playNotificationSound('start');
+          return true;
+        }
+        return prev;
+      });
     });
 
     socket.on('recording-stopped', () => {
-      setIsRecording(false);
-      setRecordingToast({ show: true, type: 'stop' });
-      playNotificationSound('stop');
-      setEgressId(null);
+      setIsRecording((prev) => {
+        if (prev) {
+          setRecordingToast({ show: true, type: 'stop' });
+          playNotificationSound('stop');
+          setEgressId(null);
+          return false;
+        }
+        return prev;
+      });
     });
 
     return () => {
@@ -233,6 +243,14 @@ export default function Meeting() {
             meetingTitle={meetingTitle}
             isHost={isHost}
             onLeave={async () => {
+              if (isHost && isRecording && egressId) {
+                // Auto-stop recording if host leaves!
+                try {
+                  await api.post('/meetings/record/stop', { egressId, roomCode });
+                } catch(e) {
+                  console.error('Failed to auto-stop recording on leave', e);
+                }
+              }
               isLeavingManually.current = true;
               clearSharedRoom();
               navigate('/dashboard');

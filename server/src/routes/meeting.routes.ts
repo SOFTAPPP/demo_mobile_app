@@ -432,6 +432,21 @@ router.get('/recordings/all', async (req: AuthRequest, res: Response): Promise<v
       return;
     }
     const recordings = await recordingQueries.getAllForUser(userId);
+
+    // Sync stale recordings
+    for (const r of recordings) {
+      if (r.status === 'recording') {
+        const status = await livekitService.getEgressStatus(r.egress_id);
+        if (status === 'EGRESS_COMPLETE' || status === '3' || status === 'completed') {
+          await recordingQueries.updateStatus('completed', r.egress_id);
+          r.status = 'completed';
+        } else if (status === 'EGRESS_FAILED' || status === '4' || status === 'EGRESS_ABORTED' || status === '5' || status === 'failed') {
+          await recordingQueries.updateStatus('failed', r.egress_id);
+          r.status = 'failed';
+        }
+      }
+    }
+
     res.json({ recordings });
   } catch (error) {
     console.error('Get all recordings error:', error);
@@ -454,6 +469,20 @@ router.get('/:id/recordings', async (req: AuthRequest, res: Response): Promise<v
     // Return all recordings for this meeting
     const recordings = allRecordings.map(r => ({ ...r, host_id: meeting?.host_id, meeting_title: meeting?.title }));
       
+    // Sync stale recordings
+    for (const r of recordings) {
+      if (r.status === 'recording') {
+        const status = await livekitService.getEgressStatus(r.egress_id);
+        if (status === 'EGRESS_COMPLETE' || status === '3' || status === 'completed') {
+          await recordingQueries.updateStatus('completed', r.egress_id);
+          r.status = 'completed';
+        } else if (status === 'EGRESS_FAILED' || status === '4' || status === 'EGRESS_ABORTED' || status === '5' || status === 'failed') {
+          await recordingQueries.updateStatus('failed', r.egress_id);
+          r.status = 'failed';
+        }
+      }
+    }
+
     res.json({ recordings });
   } catch (error) {
     console.error('Get recordings error:', error);

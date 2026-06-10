@@ -24,5 +24,9 @@ export declare const livekitService: {
      * Stop a recording
      */
     stopRecording(egressId: string): Promise<void>;
+    /**
+     * Get the current status of an egress
+     */
+    getEgressStatus(egressId: string): Promise<string>;
 };
 //# sourceMappingURL=livekit.service.d.ts.map

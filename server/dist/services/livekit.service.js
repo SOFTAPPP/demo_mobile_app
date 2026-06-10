@@ -144,6 +144,30 @@ exports.livekitService = {
         const httpUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
         const egressClient = new livekit_server_sdk_1.EgressClient(httpUrl, apiKey, apiSecret);
         await egressClient.stopEgress(egressId);
+    },
+    /**
+     * Get the current status of an egress
+     */
+    async getEgressStatus(egressId) {
+        if (!this.isConfigured())
+            return 'completed';
+        const { apiKey, apiSecret, url } = config_1.config.livekit;
+        const httpUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
+        const egressClient = new livekit_server_sdk_1.EgressClient(httpUrl, apiKey, apiSecret);
+        try {
+            // We pass the egressId in a list EgressListRequest object
+            const egresses = await egressClient.listEgress({ egressId });
+            if (egresses && egresses.length > 0) {
+                // Status 3 is EGRESS_COMPLETE, 4 is EGRESS_FAILED, 5 is EGRESS_ABORTED
+                // We will just convert it to string for checking
+                return egresses[0].status.toString();
+            }
+            return 'completed'; // If it doesn't exist, assume completed/failed and don't block UI
+        }
+        catch (e) {
+            console.error('Failed to get egress status:', e);
+            return 'completed';
+        }
     }
 };
 //# sourceMappingURL=livekit.service.js.map

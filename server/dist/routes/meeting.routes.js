@@ -414,6 +414,20 @@ router.get('/recordings/all', async (req, res) => {
             return;
         }
         const recordings = await db_1.recordingQueries.getAllForUser(userId);
+        // Sync stale recordings
+        for (const r of recordings) {
+            if (r.status === 'recording') {
+                const status = await livekit_service_1.livekitService.getEgressStatus(r.egress_id);
+                if (status === 'EGRESS_COMPLETE' || status === '3' || status === 'completed') {
+                    await db_1.recordingQueries.updateStatus('completed', r.egress_id);
+                    r.status = 'completed';
+                }
+                else if (status === 'EGRESS_FAILED' || status === '4' || status === 'EGRESS_ABORTED' || status === '5' || status === 'failed') {
+                    await db_1.recordingQueries.updateStatus('failed', r.egress_id);
+                    r.status = 'failed';
+                }
+            }
+        }
         res.json({ recordings });
     }
     catch (error) {
@@ -433,6 +447,20 @@ router.get('/:id/recordings', async (req, res) => {
         const meeting = await db_1.meetingQueries.findById(id);
         // Return all recordings for this meeting
         const recordings = allRecordings.map(r => ({ ...r, host_id: meeting?.host_id, meeting_title: meeting?.title }));
+        // Sync stale recordings
+        for (const r of recordings) {
+            if (r.status === 'recording') {
+                const status = await livekit_service_1.livekitService.getEgressStatus(r.egress_id);
+                if (status === 'EGRESS_COMPLETE' || status === '3' || status === 'completed') {
+                    await db_1.recordingQueries.updateStatus('completed', r.egress_id);
+                    r.status = 'completed';
+                }
+                else if (status === 'EGRESS_FAILED' || status === '4' || status === 'EGRESS_ABORTED' || status === '5' || status === 'failed') {
+                    await db_1.recordingQueries.updateStatus('failed', r.egress_id);
+                    r.status = 'failed';
+                }
+            }
+        }
         res.json({ recordings });
     }
     catch (error) {
