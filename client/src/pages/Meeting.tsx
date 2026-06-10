@@ -123,8 +123,8 @@ export default function Meeting() {
     socket.emit('join-room', roomCode);
 
     socket.on('meeting-ended', () => {
-      console.log(`[⏱️ Profiling] Socket.io INSTANT Teardown Received`);
-      socket.disconnect();
+      console.log('Meeting ended by host');
+      if (isLeavingManually.current) return;
       clearSharedRoom();
       navigate('/meeting-ended', { state: { roomCode } });
     });
@@ -255,16 +255,16 @@ export default function Meeting() {
               clearSharedRoom();
               navigate('/dashboard');
             }}
-            onEnd={async () => {
+            onEnd={() => {
               if (isHost) {
-                try {
-                  await api.post('/meetings/end', { roomCode });
-                  clearSharedRoom();
-                  // Navigate host to the meeting-ended page directly
-                  navigate('/meeting-ended', { state: { roomCode } });
-                } catch (e) {
+                isLeavingManually.current = true;
+                clearSharedRoom();
+                navigate('/meeting-ended', { state: { roomCode } });
+                
+                // Fire and forget, don't await! (Prevents navigating back here after 2 seconds)
+                api.post('/meetings/end', { roomCode }).catch(e => {
                   console.error('Failed to end meeting', e);
-                }
+                });
               }
             }}
             connectionError={connectionError}
@@ -428,11 +428,13 @@ function BrandedMeetingUI({
     if (!room) return;
 
     const onParticipantConnected = (participant: any) => {
-      if (participant?.identity?.startsWith('EG_') || participant?.identity?.toLowerCase().includes('egress') || participant?.isHidden) return;
+      const id = participant?.identity?.toLowerCase() || '';
+      if (id.startsWith('eg_') || id.includes('egress') || id.includes('recorder') || participant?.isHidden) return;
       playTone('join');
     };
     const onParticipantDisconnected = (participant: any) => {
-      if (participant?.identity?.startsWith('EG_') || participant?.identity?.toLowerCase().includes('egress') || participant?.isHidden) return;
+      const id = participant?.identity?.toLowerCase() || '';
+      if (id.startsWith('eg_') || id.includes('egress') || id.includes('recorder') || participant?.isHidden) return;
       playTone('leave');
     };
 
