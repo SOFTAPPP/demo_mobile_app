@@ -21,7 +21,7 @@ app.set('trust proxy', 1);
 // Socket.io for non-media real-time events (chat, notifications)
 const io = new SocketIOServer(server, {
   cors: {
-    origin: config.corsOrigins,
+    origin: true,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -30,7 +30,7 @@ const io = new SocketIOServer(server, {
 // Middleware
 app.use(helmet());
 app.use(compression());
-app.use(cors({ origin: config.corsOrigins, credentials: true }));
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
 
