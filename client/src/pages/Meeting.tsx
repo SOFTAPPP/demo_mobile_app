@@ -18,36 +18,68 @@ import api from '../services/api';
 import { clearSharedRoom, getSharedRoom, roomOptions } from '../services/livekitPrewarm';
 import '../styles/meeting.css';
 
-// Audio helper for nice chimes
-const playNotificationSound = (type: 'start' | 'stop') => {
+// Unified, professional sound system
+const playSound = (type: 'record-start' | 'record-stop' | 'user-join' | 'user-leave') => {
   try {
     const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const oscillator = audioCtx.createOscillator();
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+
+    const osc = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
-
-    oscillator.connect(gainNode);
+    
+    osc.connect(gainNode);
     gainNode.connect(audioCtx.destination);
+    
+    // Professional, smooth sine wave
+    osc.type = 'sine';
 
-    if (type === 'start') {
-      // Happy rising chime
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // A4
-      oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1); // A5
-      gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + 0.05);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
-      oscillator.start(audioCtx.currentTime);
-      oscillator.stop(audioCtx.currentTime + 0.3);
-    } else {
-      // Gentle falling chime
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
-      oscillator.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.15); // A4
-      gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + 0.05);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
-      oscillator.start(audioCtx.currentTime);
-      oscillator.stop(audioCtx.currentTime + 0.3);
+    const now = audioCtx.currentTime;
+
+    if (type === 'record-start') {
+      // Authoritative double high-blip (like iOS screen record)
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.setValueAtTime(1046.50, now + 0.1);
+      
+      gainNode.gain.setValueAtTime(0, now);
+      gainNode.gain.linearRampToValueAtTime(0.2, now + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+      gainNode.gain.linearRampToValueAtTime(0.2, now + 0.12);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+      
+      osc.start(now);
+      osc.stop(now + 0.3);
+    } else if (type === 'record-stop') {
+      // Authoritative low-blip
+      osc.frequency.setValueAtTime(440, now);
+      
+      gainNode.gain.setValueAtTime(0, now);
+      gainNode.gain.linearRampToValueAtTime(0.2, now + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+      
+      osc.start(now);
+      osc.stop(now + 0.25);
+    } else if (type === 'user-join') {
+      // Elegant soft rising tone
+      osc.frequency.setValueAtTime(523.25, now); // C5
+      osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.1); // E5
+      
+      gainNode.gain.setValueAtTime(0, now);
+      gainNode.gain.linearRampToValueAtTime(0.1, now + 0.05);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      
+      osc.start(now);
+      osc.stop(now + 0.45);
+    } else if (type === 'user-leave') {
+      // Elegant soft falling tone
+      osc.frequency.setValueAtTime(659.25, now); // E5
+      osc.frequency.exponentialRampToValueAtTime(523.25, now + 0.1); // C5
+      
+      gainNode.gain.setValueAtTime(0, now);
+      gainNode.gain.linearRampToValueAtTime(0.08, now + 0.05);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      
+      osc.start(now);
+      osc.stop(now + 0.45);
     }
   } catch (e) {
     console.log("Audio not supported or blocked", e);
@@ -133,7 +165,7 @@ export default function Meeting() {
       setIsRecording((prev) => {
         if (!prev) {
           setRecordingToast({ show: true, type: 'start' });
-          playNotificationSound('start');
+          playSound('record-start');
           return true;
         }
         return prev;
@@ -144,7 +176,7 @@ export default function Meeting() {
       setIsRecording((prev) => {
         if (prev) {
           setRecordingToast({ show: true, type: 'stop' });
-          playNotificationSound('stop');
+          playSound('record-stop');
           setEgressId(null);
           return false;
         }
@@ -277,14 +309,14 @@ export default function Meeting() {
             onOptimisticStart={(newEgressId) => {
               setEgressId(newEgressId);
               setIsRecording(true);
-              playNotificationSound('start');
+              playSound('record-start');
               setRecordingToast({ show: true, type: 'start' });
               setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
             }}
             onOptimisticStop={() => {
               setEgressId(null);
               setIsRecording(false);
-              playNotificationSound('stop');
+              playSound('record-stop');
               setRecordingToast({ show: true, type: 'stop' });
               setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
             }}
@@ -381,61 +413,25 @@ function BrandedMeetingUI({
   const [musicMode, setMusicMode] = useState(false); // Default to standard mode
   const [isRecordLoading, setIsRecordLoading] = useState(false);
 
-  // Synthesize a nice chime without needing any audio files
-  const playTone = useCallback((type: 'join' | 'leave') => {
-    try {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContext) return;
-      const ctx = new AudioContext();
-
-      if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => { });
-      }
-
-      const osc = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-
-      osc.connect(gainNode);
-      gainNode.connect(ctx.destination);
-
-      if (type === 'join') {
-        // Happy rising tone
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-        osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.1); // E5
-        gainNode.gain.setValueAtTime(0, ctx.currentTime);
-        gainNode.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.05);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-      } else {
-        // Soft falling tone
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
-        osc.frequency.exponentialRampToValueAtTime(523.25, ctx.currentTime + 0.1); // C5
-        gainNode.gain.setValueAtTime(0, ctx.currentTime);
-        gainNode.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.05);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-      }
-
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.5);
-    } catch (e) {
-      console.log('Audio playback skipped', e);
-    }
-  }, []);
-
   // Listen for participant enter/leave to play the sound
   useEffect(() => {
     if (!room) return;
 
     const onParticipantConnected = (participant: any) => {
+      // Only play sounds for actual humans. Bots typically don't have a name property.
+      if (!participant.name || participant.isHidden) return;
       const id = participant?.identity?.toLowerCase() || '';
-      if (id.startsWith('eg_') || id.includes('egress') || id.includes('recorder') || participant?.isHidden) return;
-      playTone('join');
+      if (id.startsWith('eg_') || id.includes('egress') || id.includes('recorder')) return;
+      
+      playSound('user-join');
     };
+    
     const onParticipantDisconnected = (participant: any) => {
+      if (!participant.name || participant.isHidden) return;
       const id = participant?.identity?.toLowerCase() || '';
-      if (id.startsWith('eg_') || id.includes('egress') || id.includes('recorder') || participant?.isHidden) return;
-      playTone('leave');
+      if (id.startsWith('eg_') || id.includes('egress') || id.includes('recorder')) return;
+      
+      playSound('user-leave');
     };
 
     room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
@@ -445,7 +441,7 @@ function BrandedMeetingUI({
       room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
       room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
     };
-  }, [room, playTone]);
+  }, [room]);
 
   // Confirmation Modal State
   const [confirmAction, setConfirmAction] = useState<'leave' | 'end' | null>(null);
