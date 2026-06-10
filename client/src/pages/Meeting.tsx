@@ -408,15 +408,12 @@ function BrandedMeetingUI({
     };
   }, [room, playTone]);
 
-  const [optimisticMic, setOptimisticMic] = useState<boolean | null>(null);
-  const [optimisticCam, setOptimisticCam] = useState<boolean | null>(null);
-
   // Confirmation Modal State
   const [confirmAction, setConfirmAction] = useState<'leave' | 'end' | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
-  const displayMic = optimisticMic !== null ? optimisticMic : isMicrophoneEnabled;
-  const displayCam = optimisticCam !== null ? optimisticCam : isCameraEnabled;
+  const displayMic = isMicrophoneEnabled;
+  const displayCam = isCameraEnabled;
 
   // Profiling Logs
   useEffect(() => {
@@ -472,28 +469,18 @@ function BrandedMeetingUI({
   };
 
   const toggleMic = async () => {
-    const nextState = !displayMic;
-    setOptimisticMic(nextState);
     try {
-      await localParticipant.setMicrophoneEnabled(nextState);
+      await localParticipant.setMicrophoneEnabled(!displayMic);
     } catch (e) {
       console.error('Mic toggle failed', e);
-      setOptimisticMic(!nextState); // Revert on error
-    } finally {
-      setOptimisticMic(null);
     }
   };
 
   const toggleCam = async () => {
-    const nextState = !displayCam;
-    setOptimisticCam(nextState);
     try {
-      await localParticipant.setCameraEnabled(nextState);
+      await localParticipant.setCameraEnabled(!displayCam);
     } catch (e) {
       console.error('Cam toggle failed', e);
-      setOptimisticCam(!nextState); // Revert on error
-    } finally {
-      setOptimisticCam(null);
     }
   };
 
@@ -554,7 +541,10 @@ function BrandedMeetingUI({
           }
         }
 
+        // Optimistic UI for start
+        if (onOptimisticStart) onOptimisticStart('temp_id_loading');
         const { data } = await api.post('/meetings/record/start', { roomCode });
+        // Update with real ID once we have it
         if (onOptimisticStart) onOptimisticStart(data.egressId);
       }
     } catch (e: any) {
@@ -653,7 +643,7 @@ function BrandedMeetingUI({
 
       {/* Video Area */}
       <div className="meeting-room__content">
-        {connectionState !== 'connected' ? (
+        {connectionState === 'connecting' || connectionState === 'reconnecting' ? (
           <div className="elite-connecting">
             <div className="elite-connecting__orb">
               <span style={{ fontSize: '24px', color: 'white' }}>🎵</span>

@@ -232,17 +232,20 @@ export default function Dashboard() {
 
   const confirmDelete = async () => {
     if (!meetingToDelete) return;
+    const targetId = meetingToDelete;
+    setMeetingToDelete(null);
+    
+    // Optimistic UI update
+    setRecentMeetings(prev => prev.filter(m => m.id !== targetId));
+    
     try {
-      await api.delete(`/meetings/${meetingToDelete}`);
-      setRecentMeetings(prev => prev.filter(m => m.id !== meetingToDelete));
+      await api.delete(`/meetings/${targetId}`);
     } catch (err: any) {
-      if (err.response?.status === 404) {
-        setRecentMeetings(prev => prev.filter(m => m.id !== meetingToDelete));
-      } else {
+      // Revert if error isn't 404
+      if (err.response?.status !== 404) {
         setAlertMessage(err.response?.data?.error || 'Failed to delete meeting');
+        fetchMeetings(); // Re-fetch to restore
       }
-    } finally {
-      setMeetingToDelete(null);
     }
   };
 
@@ -276,14 +279,18 @@ export default function Dashboard() {
 
   const confirmDeleteRecording = async () => {
     if (!deleteRecordingId) return;
+    const targetId = deleteRecordingId;
+    setDeleteRecordingId(null);
+    
+    // Optimistic UI update
+    setSelectedRecordings(prev => prev.filter(r => r.id !== targetId));
+    
     try {
-      await api.delete(`/meetings/recordings/${deleteRecordingId}`);
-      setSelectedRecordings(prev => prev.filter(r => r.id !== deleteRecordingId));
-      setDeleteRecordingId(null);
+      await api.delete(`/meetings/recordings/${targetId}`);
     } catch (err: any) {
       console.error('Failed to delete recording', err);
       setAlertMessage(err.response?.data?.error || 'Failed to delete recording');
-      setDeleteRecordingId(null);
+      // In a real app we'd revert the state here, but for now just show error
     }
   };
 

@@ -52,14 +52,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(data.user);
   }, []);
 
-  const logout = useCallback(async () => {
-    try {
-      await api.post('/auth/logout');
-    } catch (e) {
-      // Ignore errors on logout
-    }
+  const logout = useCallback(() => {
     sessionStorage.removeItem('user');
     setUser(null);
+    api.post('/auth/logout').catch(() => {});
   }, []);
 
   return (

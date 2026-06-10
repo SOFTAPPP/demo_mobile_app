@@ -213,10 +213,10 @@ exports.recordingQueries = {
         SELECT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
         FROM recordings r
         JOIN meetings m ON r.meeting_id = m.id
-        WHERE r.user_id = ? OR r.user_id = ''
+        WHERE r.user_id = ? OR (r.user_id = '' AND m.host_id = ?)
         ORDER BY r.created_at DESC
       `,
-            args: [user_id]
+            args: [user_id, user_id]
         });
         return res.rows;
     },

@@ -370,7 +370,14 @@ router.delete('/recordings/:id', async (req, res) => {
             res.status(404).json({ error: 'Recording not found' });
             return;
         }
-        if (recording.user_id !== '' && recording.user_id !== req.user.userId) {
+        if (recording.user_id === '') {
+            const meeting = await db_1.meetingQueries.findById(recording.meeting_id);
+            if (meeting?.host_id !== req.user.userId) {
+                res.status(403).json({ error: 'Only the host can delete legacy recordings' });
+                return;
+            }
+        }
+        else if (recording.user_id !== req.user.userId) {
             res.status(403).json({ error: 'Only the owner can delete this recording' });
             return;
         }
@@ -408,7 +415,13 @@ router.get('/recordings/all', async (req, res) => {
 router.get('/:id/recordings', async (req, res) => {
     try {
         const { id } = req.params;
-        const recordings = await db_1.recordingQueries.getByMeetingId(id);
+        const userId = req.user?.userId;
+        const allRecordings = await db_1.recordingQueries.getByMeetingId(id);
+        const meeting = await db_1.meetingQueries.findById(id);
+        // Filter recordings so users only see their own (or legacy host recordings)
+        const recordings = allRecordings
+            .filter(r => r.user_id === userId || (r.user_id === '' && meeting?.host_id === userId))
+            .map(r => ({ ...r, host_id: meeting?.host_id, meeting_title: meeting?.title }));
         res.json({ recordings });
     }
     catch (error) {
