@@ -556,7 +556,6 @@ function BrandedMeetingUI({
       tracks.length <= 4 ? 'video-grid--4' : 'video-grid--many';
 
   const handleRecordToggle = async () => {
-    if (!isHost) return;
     try {
       setIsRecordLoading(true);
       if (isRecording && egressId) {

@@ -329,11 +329,6 @@ router.post('/record/start', async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    if (meeting.host_id !== req.user!.userId) {
-      res.status(403).json({ error: 'Only the host can record' });
-      return;
-    }
-
     const { egressId, fileUrl } = await livekitService.startRecording(roomCode);
     
     // Save recording to DB
@@ -367,8 +362,8 @@ router.post('/record/stop', async (req: AuthRequest, res: Response): Promise<voi
     }
 
     const meeting = await meetingQueries.findByCode(roomCode);
-    if (!meeting || meeting.host_id !== req.user!.userId) {
-      res.status(403).json({ error: 'Only the host can stop recording' });
+    if (!meeting) {
+      res.status(404).json({ error: 'Meeting not found' });
       return;
     }
 

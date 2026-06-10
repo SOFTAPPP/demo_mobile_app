@@ -248,13 +248,14 @@ export const recordingQueries = {
   getAllForUser: async (user_id: string) => {
     const res = await db.execute({
       sql: `
-        SELECT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
+        SELECT DISTINCT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
         FROM recordings r
         JOIN meetings m ON r.meeting_id = m.id
-        WHERE m.host_id = ?
+        LEFT JOIN recent_meetings rm ON m.id = rm.meeting_id AND rm.user_id = ?
+        WHERE m.host_id = ? OR rm.user_id = ? OR r.user_id = ?
         ORDER BY r.created_at DESC
       `,
-      args: [user_id]
+      args: [user_id, user_id, user_id, user_id]
     });
     return res.rows as unknown as Recording[];
   },
