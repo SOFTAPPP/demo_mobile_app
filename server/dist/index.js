@@ -95,6 +95,12 @@ io.on('connection', (socket) => {
         socket.leave(roomCode);
         console.log(`👤 ${socket.id} left room ${roomCode}`);
     });
+    socket.on('recording-started', (roomCode) => {
+        socket.to(roomCode).emit('recording-started');
+    });
+    socket.on('recording-stopped', (roomCode) => {
+        socket.to(roomCode).emit('recording-stopped');
+    });
     socket.on('disconnect', () => {
         logger_1.logger.info(`🔌 Socket disconnected: ${socket.id}`);
     });
