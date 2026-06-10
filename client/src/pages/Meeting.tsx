@@ -396,8 +396,14 @@ function BrandedMeetingUI({
   useEffect(() => {
     if (!room) return;
 
-    const onParticipantConnected = () => playTone('join');
-    const onParticipantDisconnected = () => playTone('leave');
+    const onParticipantConnected = (participant: any) => {
+      if (participant?.identity?.startsWith('EG_') || participant?.identity?.toLowerCase().includes('egress') || participant?.isHidden) return;
+      playTone('join');
+    };
+    const onParticipantDisconnected = (participant: any) => {
+      if (participant?.identity?.startsWith('EG_') || participant?.identity?.toLowerCase().includes('egress') || participant?.isHidden) return;
+      playTone('leave');
+    };
 
     room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
     room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
