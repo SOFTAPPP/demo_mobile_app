@@ -361,7 +361,15 @@ router.post('/record/stop', async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    await livekitService.stopRecording(egressId);
+    try {
+      await livekitService.stopRecording(egressId);
+    } catch (err: any) {
+      if (err.message && err.message.includes('EGRESS_COMPLETE')) {
+        console.log(`[Recording] Egress ${egressId} was already completed when trying to stop. Marking as complete.`);
+      } else {
+        throw err;
+      }
+    }
     
     // Update DB status
     await recordingQueries.updateStatus('completed', egressId);

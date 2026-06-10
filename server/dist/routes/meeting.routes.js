@@ -348,7 +348,17 @@ router.post('/record/stop', async (req, res) => {
             res.status(400).json({ error: 'Egress ID is required' });
             return;
         }
-        await livekit_service_1.livekitService.stopRecording(egressId);
+        try {
+            await livekit_service_1.livekitService.stopRecording(egressId);
+        }
+        catch (err) {
+            if (err.message && err.message.includes('EGRESS_COMPLETE')) {
+                console.log(`[Recording] Egress ${egressId} was already completed when trying to stop. Marking as complete.`);
+            }
+            else {
+                throw err;
+            }
+        }
         // Update DB status
         await db_1.recordingQueries.updateStatus('completed', egressId);
         res.json({ message: 'Recording stopped' });
