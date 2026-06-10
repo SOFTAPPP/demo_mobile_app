@@ -15,6 +15,9 @@ import meetingRoutes from './routes/meeting.routes';
 const app = express();
 const server = http.createServer(app);
 
+// Trust the Render reverse proxy for rate-limiting
+app.set('trust proxy', 1);
+
 // Socket.io for non-media real-time events (chat, notifications)
 const io = new SocketIOServer(server, {
   cors: {
