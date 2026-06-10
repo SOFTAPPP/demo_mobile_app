@@ -296,6 +296,36 @@ export default function Dashboard() {
     ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     : '?';
 
+  const getLearningStats = () => {
+    let totalMinutes = 0;
+    
+    recentMeetings.forEach(m => {
+      if (m.created_at) {
+        const start = new Date(m.created_at).getTime();
+        const end = m.ended_at ? new Date(m.ended_at).getTime() : Date.now();
+        const diffMins = (end - start) / (1000 * 60);
+        if (diffMins > 0) {
+          totalMinutes += diffMins;
+        }
+      }
+    });
+
+    if (totalMinutes < 1) {
+      return { value: 0, label: 'Minutes of Learning' };
+    } else if (totalMinutes < 60) {
+      return { value: Math.floor(totalMinutes), label: 'Minutes of Learning' };
+    } else {
+      const hours = Math.floor(totalMinutes / 60);
+      const mins = Math.floor(totalMinutes % 60);
+      if (mins === 0) {
+        return { value: hours, label: hours === 1 ? 'Hour of Learning' : 'Hours of Learning' };
+      }
+      return { value: `${hours}h ${mins}m`, label: 'Total Learning Time' };
+    }
+  };
+
+  const learningStats = getLearningStats();
+
   return (
     <div className="dashboard">
       {/* Mobile sidebar toggle */}
@@ -465,8 +495,8 @@ export default function Dashboard() {
           </div>
           <div className="stat-card">
             <span className="stat-card__icon">⏱️</span>
-            <div className="stat-card__value">{Math.floor(recentMeetings.length * 45)}</div>
-            <div className="stat-card__label">Minutes of Learning</div>
+            <div className="stat-card__value" style={{ fontSize: typeof learningStats.value === 'string' ? '1.8rem' : undefined }}>{learningStats.value}</div>
+            <div className="stat-card__label">{learningStats.label}</div>
           </div>
           <div className="stat-card">
             <span className="stat-card__icon">🏆</span>
