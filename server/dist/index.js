@@ -103,19 +103,24 @@ app.use((err, req, res, next) => {
     res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
 });
 // Start server
-server.listen(config_1.config.port, () => {
-    logger_1.logger.info(`Server started on port ${config_1.config.port}`);
-    console.log('');
-    console.log('🎵 ═══════════════════════════════════════════════════');
-    console.log('   Sangeet Arghya — Nada Upasana Academy');
-    console.log('   Meeting Server');
-    console.log('═══════════════════════════════════════════════════════');
-    console.log(`   🚀 Server running on http://localhost:${config_1.config.port}`);
-    console.log(`   📡 API endpoint: http://localhost:${config_1.config.port}/api`);
-    console.log(`   🔑 LiveKit: ${config_1.config.livekit.apiKey ? '✅ Configured' : '⚠️  Not configured (demo mode)'}`);
-    console.log('═══════════════════════════════════════════════════════');
-    console.log('');
-});
+const db_1 = require("./models/db");
+const start = async () => {
+    await (0, db_1.initializeDatabase)();
+    server.listen(config_1.config.port, () => {
+        logger_1.logger.info(`Server started on port ${config_1.config.port}`);
+        console.log('');
+        console.log('🎵 ═══════════════════════════════════════════════════');
+        console.log('   Sangeet Arghya — Nada Upasana Academy');
+        console.log('   Meeting Server');
+        console.log('═══════════════════════════════════════════════════════');
+        console.log(`   🚀 Server running on http://localhost:${config_1.config.port}`);
+        console.log(`   📡 API endpoint: http://localhost:${config_1.config.port}/api`);
+        console.log(`   🔑 LiveKit: ${config_1.config.livekit.apiKey ? '✅ Configured' : '⚠️  Not configured (demo mode)'}`);
+        console.log('═══════════════════════════════════════════════════════');
+        console.log('');
+    });
+};
+start();
 // Graceful Shutdown
 const shutdown = () => {
     logger_1.logger.info('SIGTERM/SIGINT received. Shutting down gracefully...');
@@ -126,6 +131,9 @@ const shutdown = () => {
             db.close();
             logger_1.logger.info('Database connection closed.');
             process.exit(0);
+        }).catch((err) => {
+            logger_1.logger.error('Failed to close database:', err);
+            process.exit(1);
         });
     });
 };

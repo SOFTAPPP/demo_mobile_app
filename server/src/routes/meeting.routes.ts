@@ -34,13 +34,13 @@ router.post('/create', async (req: AuthRequest, res: Response): Promise<void> =>
     let roomCode = generateRoomCode();
 
     // Ensure unique room code
-    let existing = meetingQueries.findByCode.get(roomCode);
+    let existing = await meetingQueries.findByCode(roomCode);
     while (existing) {
       roomCode = generateRoomCode();
-      existing = meetingQueries.findByCode.get(roomCode);
+      existing = await meetingQueries.findByCode(roomCode);
     }
 
-    meetingQueries.create.run(meetingId, roomCode, meetingTitle, req.user!.userId, 100);
+    await meetingQueries.create(meetingId, roomCode, meetingTitle, req.user!.userId, 100);
 
     // Generate LiveKit token for the host (teacher)
     const token = await livekitService.generateToken(
@@ -87,14 +87,14 @@ router.post('/schedule', async (req: AuthRequest, res: Response): Promise<void> 
     let roomCode = generateRoomCode();
 
     // Ensure unique room code
-    let existing = meetingQueries.findByCode.get(roomCode);
+    let existing = await meetingQueries.findByCode(roomCode);
     while (existing) {
       roomCode = generateRoomCode();
-      existing = meetingQueries.findByCode.get(roomCode);
+      existing = await meetingQueries.findByCode(roomCode);
     }
 
     // Insert scheduled meeting into the database
-    meetingQueries.schedule.run(meetingId, roomCode, meetingTitle, req.user!.userId, 100, scheduledFor);
+    await meetingQueries.schedule(meetingId, roomCode, meetingTitle, req.user!.userId, 100, scheduledFor);
 
     res.status(201).json({
       meeting: {
@@ -124,7 +124,7 @@ router.post('/join', async (req: AuthRequest, res: Response): Promise<void> => {
       return;
     }
 
-    const meeting = meetingQueries.findByCode.get(roomCode.toUpperCase()) as Meeting | undefined;
+    const meeting = await meetingQueries.findByCode(roomCode.toUpperCase());
     if (!meeting) {
       res.status(404).json({ error: 'Meeting not found. Check the room code.' });
       return;
@@ -148,10 +148,10 @@ router.post('/join', async (req: AuthRequest, res: Response): Promise<void> => {
 
     // Record user as participant in this meeting
     try {
-      db.prepare(`
-        INSERT OR IGNORE INTO meeting_participants (meeting_id, user_id)
-        VALUES (?, ?)
-      `).run(meeting.id, req.user!.userId);
+      await db.execute({
+        sql: `INSERT OR IGNORE INTO meeting_participants (meeting_id, user_id) VALUES (?, ?)`,
+        args: [meeting.id, req.user!.userId]
+      });
     } catch (dbError) {
       console.error('Failed to record meeting participant:', dbError);
     }
@@ -188,7 +188,7 @@ router.post('/end', async (req: AuthRequest, res: Response): Promise<void> => {
       return;
     }
     const cleanRoomCode = roomCode.toUpperCase();
-    const meeting = meetingQueries.findByCode.get(cleanRoomCode) as Meeting | undefined;
+    const meeting = await meetingQueries.findByCode(cleanRoomCode);
 
     if (!meeting) {
       res.status(404).json({ error: 'Meeting not found' });
@@ -200,7 +200,7 @@ router.post('/end', async (req: AuthRequest, res: Response): Promise<void> => {
       return;
     }
 
-    meetingQueries.endMeeting.run(cleanRoomCode);
+    await meetingQueries.endMeeting(cleanRoomCode);
     
     // Broadcast instantly to all participants via Socket.io for 0-latency teardown
     const { io } = await import('../index');
@@ -208,13 +208,13 @@ router.post('/end', async (req: AuthRequest, res: Response): Promise<void> => {
     io.emit('meeting-ended-global', cleanRoomCode); 
 
     // Find if there is an active recording
-    const recordings = recordingQueries.getByMeetingId.all(meeting.id) as any[];
+    const recordings = await recordingQueries.getByMeetingId(meeting.id);
     const activeRecording = recordings.find(r => r.status === 'recording');
     
     if (activeRecording) {
       try {
         await livekitService.stopRecording(activeRecording.egress_id);
-        recordingQueries.updateStatus.run('completed', activeRecording.egress_id);
+        await recordingQueries.updateStatus('completed', activeRecording.egress_id);
         // Wait 2 seconds for LiveKit to gracefully finalize the MP4 upload before nuking the room
         await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (err) {
@@ -236,9 +236,9 @@ router.post('/end', async (req: AuthRequest, res: Response): Promise<void> => {
  * GET /api/meetings/recent
  * Get recent meetings for the current user
  */
-router.get('/recent', (req: AuthRequest, res: Response): void => {
+router.get('/recent', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const meetings = meetingQueries.getRecent.all(req.user!.userId, req.user!.userId);
+    const meetings = await meetingQueries.getRecent(req.user!.userId, req.user!.userId);
     res.json({ meetings });
   } catch (error) {
     console.error('Get recent meetings error:', error);
@@ -250,9 +250,9 @@ router.get('/recent', (req: AuthRequest, res: Response): void => {
  * GET /api/meetings/scheduled
  * Get scheduled meetings for the current user
  */
-router.get('/scheduled', (req: AuthRequest, res: Response): void => {
+router.get('/scheduled', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const meetings = meetingQueries.getScheduled.all(req.user!.userId);
+    const meetings = await meetingQueries.getScheduled(req.user!.userId);
     res.json({ meetings });
   } catch (error) {
     console.error('Get scheduled meetings error:', error);
@@ -264,9 +264,9 @@ router.get('/scheduled', (req: AuthRequest, res: Response): void => {
  * GET /api/meetings/active
  * Get all active meetings
  */
-router.get('/active', (req: AuthRequest, res: Response): void => {
+router.get('/active', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const meetings = meetingQueries.getActive.all();
+    const meetings = await meetingQueries.getActive();
     res.json({ meetings });
   } catch (error) {
     console.error('Get active meetings error:', error);
@@ -278,10 +278,10 @@ router.get('/active', (req: AuthRequest, res: Response): void => {
  * DELETE /api/meetings/:id
  * Teacher deletes a meeting
  */
-router.delete('/:id', (req: AuthRequest, res: Response): void => {
+router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const meeting = meetingQueries.findById.get(id) as Meeting | undefined;
+    const meeting = await meetingQueries.findById(id as string);
 
     if (!meeting) {
       res.status(404).json({ error: 'Meeting not found' });
@@ -291,12 +291,15 @@ router.delete('/:id', (req: AuthRequest, res: Response): void => {
     if (meeting.host_id === req.user!.userId) {
       // Host: Soft delete the meeting so it disappears from the Dashboard list
       // We purposefully DO NOT delete meeting_participants so students can still view the cloud recording!
-      meetingQueries.deleteMeeting.run(id, req.user!.userId);
+      await meetingQueries.deleteMeeting(id as string, req.user!.userId);
       res.json({ message: 'Meeting removed from dashboard successfully' });
     } else {
       // Participant: just remove this meeting from their own history
-      const result = db.prepare('DELETE FROM meeting_participants WHERE meeting_id = ? AND user_id = ?').run(id, req.user!.userId);
-      if (result.changes === 0) {
+      const result = await db.execute({
+        sql: 'DELETE FROM meeting_participants WHERE meeting_id = ? AND user_id = ?',
+        args: [id as string, req.user!.userId]
+      });
+      if (result.rowsAffected === 0) {
         res.status(403).json({ error: 'Only the host can delete this meeting' });
         return;
       }
@@ -320,7 +323,7 @@ router.post('/record/start', async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    const meeting = meetingQueries.findByCode.get(roomCode) as Meeting | undefined;
+    const meeting = await meetingQueries.findByCode(roomCode);
     if (!meeting) {
       res.status(404).json({ error: 'Meeting not found' });
       return;
@@ -335,7 +338,7 @@ router.post('/record/start', async (req: AuthRequest, res: Response): Promise<vo
     
     // Save recording to DB
     const recordingId = uuidv4();
-    recordingQueries.create.run(
+    await recordingQueries.create(
       recordingId,
       meeting.id,
       egressId,
@@ -366,7 +369,7 @@ router.post('/record/stop', async (req: AuthRequest, res: Response): Promise<voi
     await livekitService.stopRecording(egressId);
     
     // Update DB status
-    recordingQueries.updateStatus.run('completed', egressId);
+    await recordingQueries.updateStatus('completed', egressId);
 
     res.json({ message: 'Recording stopped' });
     
@@ -385,24 +388,24 @@ router.post('/record/stop', async (req: AuthRequest, res: Response): Promise<voi
  * DELETE /api/meetings/recordings/:id
  * Teacher deletes a recording
  */
-router.delete('/recordings/:id', (req: AuthRequest, res: Response): void => {
+router.delete('/recordings/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const recording = recordingQueries.findById.get(id) as any;
+    const recording = await recordingQueries.findById(id as string);
     
     if (!recording) {
       res.status(404).json({ error: 'Recording not found' });
       return;
     }
 
-    const meeting = meetingQueries.findById.get(recording.meeting_id) as any;
+    const meeting = await meetingQueries.findById(recording.meeting_id);
     
-    if (meeting.host_id !== req.user!.userId) {
+    if (meeting!.host_id !== req.user!.userId) {
       res.status(403).json({ error: 'Only the host can delete this recording' });
       return;
     }
 
-    recordingQueries.deleteById.run(id);
+    await recordingQueries.deleteById(id as string);
     res.json({ message: 'Recording deleted successfully' });
   } catch (error) {
     console.error('Delete recording error:', error);
@@ -414,14 +417,14 @@ router.delete('/recordings/:id', (req: AuthRequest, res: Response): void => {
  * GET /api/meetings/recordings/all
  * Fetch all recordings for a user
  */
-router.get('/recordings/all', (req: AuthRequest, res: Response): void => {
+router.get('/recordings/all', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    const recordings = recordingQueries.getAllForUser.all(userId, userId);
+    const recordings = await recordingQueries.getAllForUser(userId, userId);
     res.json({ recordings });
   } catch (error) {
     console.error('Get all recordings error:', error);
@@ -433,10 +436,10 @@ router.get('/recordings/all', (req: AuthRequest, res: Response): void => {
  * GET /api/meetings/:id/recordings
  * Fetch recordings for a specific meeting
  */
-router.get('/:id/recordings', (req: AuthRequest, res: Response): void => {
+router.get('/:id/recordings', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const recordings = recordingQueries.getByMeetingId.all(id);
+    const recordings = await recordingQueries.getByMeetingId(id as string);
     res.json({ recordings });
   } catch (error) {
     console.error('Get recordings error:', error);

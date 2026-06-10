@@ -13,5 +13,16 @@ export declare const livekitService: {
      * Forcefully ends a LiveKit room, kicking out all participants
      */
     endRoom(roomName: string): Promise<void>;
+    /**
+     * Start recording a LiveKit room and upload directly to Cloudflare R2
+     */
+    startRecording(roomName: string): Promise<{
+        egressId: string;
+        fileUrl: string;
+    }>;
+    /**
+     * Stop a recording
+     */
+    stopRecording(egressId: string): Promise<void>;
 };
 //# sourceMappingURL=livekit.service.d.ts.map

@@ -12,8 +12,8 @@
     "restart:prod": "pm2 restart sangeet-arghya-server"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.3",
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.7.0",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -33,7 +33,6 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/better-sqlite3": "^7.6.12",
     "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",

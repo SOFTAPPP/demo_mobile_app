@@ -1,89 +1,102 @@
-import Database from 'better-sqlite3';
-import type { Database as DBType, Statement } from 'better-sqlite3';
+import { createClient, Client } from '@libsql/client';
 import path from 'path';
-
-const DB_PATH = path.join(__dirname, '..', '..', 'data', 'app.db');
-
-// Ensure data directory exists
 import fs from 'fs';
-const dataDir = path.dirname(DB_PATH);
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+import { config } from '../config';
+
+const url = process.env.TURSO_DATABASE_URL || 'file:../../data/app.db';
+const authToken = process.env.TURSO_AUTH_TOKEN;
+
+// If using local file fallback, ensure data directory exists
+if (url.startsWith('file:')) {
+  const DB_PATH = path.join(__dirname, '..', '..', 'data', 'app.db');
+  const dataDir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
 }
 
-const db: DBType = new Database(DB_PATH);
+const db: Client = createClient({ url, authToken });
 
-// Enable WAL mode for better concurrency
-db.pragma('journal_mode = WAL');
+export const initializeDatabase = async () => {
+  // Create users table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT DEFAULT 'student',
+      avatar_color TEXT DEFAULT '#7B2D26',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
 
-// Create users table
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT DEFAULT 'student',
-    avatar_color TEXT DEFAULT '#7B2D26',
-    created_at TEXT DEFAULT (datetime('now'))
-  )
-`);
+  // Create meetings table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS meetings (
+      id TEXT PRIMARY KEY,
+      room_code TEXT UNIQUE NOT NULL,
+      title TEXT NOT NULL,
+      host_id TEXT NOT NULL,
+      max_participants INTEGER DEFAULT 100,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      ended_at TEXT,
+      scheduled_for TEXT,
+      is_deleted INTEGER DEFAULT 0,
+      FOREIGN KEY (host_id) REFERENCES users(id)
+    )
+  `);
 
-// Create meetings table
-db.exec(`
-  CREATE TABLE IF NOT EXISTS meetings (
-    id TEXT PRIMARY KEY,
-    room_code TEXT UNIQUE NOT NULL,
-    title TEXT NOT NULL,
-    host_id TEXT NOT NULL,
-    max_participants INTEGER DEFAULT 100,
-    is_active INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now')),
-    ended_at TEXT,
-    scheduled_for TEXT,
-    FOREIGN KEY (host_id) REFERENCES users(id)
-  )
-`);
+  // Simple migration to add scheduled_for if the table already existed (SQLite ignores if it exists with try/catch, but libsql execute might throw. Let's do a safe try-catch)
+  try {
+    await db.execute(`ALTER TABLE meetings ADD COLUMN scheduled_for TEXT;`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  
+  try {
+    await db.execute(`ALTER TABLE meetings ADD COLUMN is_deleted INTEGER DEFAULT 0;`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
 
-// Simple migration to add scheduled_for if the table already existed
-try {
-  db.exec(`ALTER TABLE meetings ADD COLUMN scheduled_for TEXT;`);
-} catch (e) {
-  // Column already exists, ignore
-}
+  // Create meeting participants table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS meeting_participants (
+      meeting_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      joined_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (meeting_id, user_id),
+      FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
 
-// Create meeting participants table
-db.exec(`
-  CREATE TABLE IF NOT EXISTS meeting_participants (
-    meeting_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    joined_at TEXT DEFAULT (datetime('now')),
-    PRIMARY KEY (meeting_id, user_id),
-    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  )
-`);
+  // Create recordings table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS recordings (
+      id TEXT PRIMARY KEY,
+      meeting_id TEXT NOT NULL,
+      egress_id TEXT NOT NULL,
+      status TEXT DEFAULT 'recording',
+      file_url TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+    )
+  `);
 
-// Create recordings table
-db.exec(`
-  CREATE TABLE IF NOT EXISTS recordings (
-    id TEXT PRIMARY KEY,
-    meeting_id TEXT NOT NULL,
-    egress_id TEXT NOT NULL,
-    status TEXT DEFAULT 'recording',
-    file_url TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
-  )
-`);
-
-// Add Performance Indices
-db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_meetings_host ON meetings(host_id);
-  CREATE INDEX IF NOT EXISTS idx_meetings_room_code ON meetings(room_code);
-  CREATE INDEX IF NOT EXISTS idx_meetings_scheduled ON meetings(scheduled_for);
-  CREATE INDEX IF NOT EXISTS idx_meeting_participants_user ON meeting_participants(user_id);
-`);
+  // Add Performance Indices
+  const indices = [
+    `CREATE INDEX IF NOT EXISTS idx_meetings_host ON meetings(host_id);`,
+    `CREATE INDEX IF NOT EXISTS idx_meetings_room_code ON meetings(room_code);`,
+    `CREATE INDEX IF NOT EXISTS idx_meetings_scheduled ON meetings(scheduled_for);`,
+    `CREATE INDEX IF NOT EXISTS idx_meeting_participants_user ON meeting_participants(user_id);`
+  ];
+  for (const q of indices) {
+    await db.execute(q);
+  }
+};
 
 export interface User {
   id: string;
@@ -116,75 +129,135 @@ export interface Recording {
   created_at: string;
 }
 
-// Add is_deleted column to meetings for soft-deleting
-try {
-  db.exec(`ALTER TABLE meetings ADD COLUMN is_deleted INTEGER DEFAULT 0;`);
-} catch (e) {
-  // Column already exists, ignore
-}
-
 // User queries
-export const userQueries: Record<string, Statement> = {
-  create: db.prepare(`
-    INSERT INTO users (id, name, email, password_hash, role, avatar_color)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `),
-  findByEmail: db.prepare(`SELECT * FROM users WHERE email = ?`),
-  findById: db.prepare(`SELECT * FROM users WHERE id = ?`),
-  getAll: db.prepare(`SELECT id, name, email, role, avatar_color, created_at FROM users`),
+export const userQueries = {
+  create: async (id: string, name: string, email: string, password_hash: string, role: string, avatar_color: string) => {
+    await db.execute({
+      sql: `INSERT INTO users (id, name, email, password_hash, role, avatar_color) VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [id, name, email, password_hash, role, avatar_color]
+    });
+  },
+  findByEmail: async (email: string) => {
+    const res = await db.execute({ sql: `SELECT * FROM users WHERE email = ?`, args: [email] });
+    return res.rows[0] as unknown as User | undefined;
+  },
+  findById: async (id: string) => {
+    const res = await db.execute({ sql: `SELECT * FROM users WHERE id = ?`, args: [id] });
+    return res.rows[0] as unknown as User | undefined;
+  },
+  getAll: async () => {
+    const res = await db.execute(`SELECT id, name, email, role, avatar_color, created_at FROM users`);
+    return res.rows as unknown as User[];
+  },
 };
 
 // Meeting queries
-export const meetingQueries: Record<string, Statement> = {
-  create: db.prepare(`
-    INSERT INTO meetings (id, room_code, title, host_id, max_participants)
-    VALUES (?, ?, ?, ?, ?)
-  `),
-  schedule: db.prepare(`
-    INSERT INTO meetings (id, room_code, title, host_id, max_participants, scheduled_for)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `),
-  findByCode: db.prepare(`SELECT * FROM meetings WHERE room_code = ? AND is_deleted = 0`),
-  findById: db.prepare(`SELECT * FROM meetings WHERE id = ?`),
-  getActiveByHost: db.prepare(`SELECT * FROM meetings WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NULL AND is_deleted = 0`),
-  getRecent: db.prepare(`
-    SELECT DISTINCT m.* FROM meetings m
-    LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id
-    WHERE m.is_deleted = 0 AND ((m.host_id = ? AND (m.scheduled_for IS NULL OR m.is_active = 0)) 
-       OR (mp.user_id = ?))
-    ORDER BY m.created_at DESC
-    LIMIT 10
-  `),
-  getScheduled: db.prepare(`
-    SELECT * FROM meetings 
-    WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NOT NULL AND is_deleted = 0
-    ORDER BY scheduled_for ASC
-  `),
-  endMeeting: db.prepare(`UPDATE meetings SET is_active = 0, ended_at = datetime('now') WHERE room_code = ?`),
-  getActive: db.prepare(`SELECT * FROM meetings WHERE is_active = 1 AND scheduled_for IS NULL AND is_deleted = 0`),
-  deleteMeeting: db.prepare(`UPDATE meetings SET is_deleted = 1 WHERE id = ? AND host_id = ?`),
+export const meetingQueries = {
+  create: async (id: string, room_code: string, title: string, host_id: string, max_participants: number) => {
+    await db.execute({
+      sql: `INSERT INTO meetings (id, room_code, title, host_id, max_participants) VALUES (?, ?, ?, ?, ?)`,
+      args: [id, room_code, title, host_id, max_participants]
+    });
+  },
+  schedule: async (id: string, room_code: string, title: string, host_id: string, max_participants: number, scheduled_for: string) => {
+    await db.execute({
+      sql: `INSERT INTO meetings (id, room_code, title, host_id, max_participants, scheduled_for) VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [id, room_code, title, host_id, max_participants, scheduled_for]
+    });
+  },
+  findByCode: async (room_code: string) => {
+    const res = await db.execute({ sql: `SELECT * FROM meetings WHERE room_code = ? AND is_deleted = 0`, args: [room_code] });
+    return res.rows[0] as unknown as Meeting | undefined;
+  },
+  findById: async (id: string) => {
+    const res = await db.execute({ sql: `SELECT * FROM meetings WHERE id = ?`, args: [id] });
+    return res.rows[0] as unknown as Meeting | undefined;
+  },
+  getActiveByHost: async (host_id: string) => {
+    const res = await db.execute({ sql: `SELECT * FROM meetings WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NULL AND is_deleted = 0`, args: [host_id] });
+    return res.rows as unknown as Meeting[];
+  },
+  getRecent: async (host_id: string, user_id: string) => {
+    const res = await db.execute({
+      sql: `
+        SELECT DISTINCT m.* FROM meetings m
+        LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id
+        WHERE m.is_deleted = 0 AND ((m.host_id = ? AND (m.scheduled_for IS NULL OR m.is_active = 0)) 
+           OR (mp.user_id = ?))
+        ORDER BY m.created_at DESC
+        LIMIT 10
+      `,
+      args: [host_id, user_id]
+    });
+    return res.rows as unknown as Meeting[];
+  },
+  getScheduled: async (host_id: string) => {
+    const res = await db.execute({
+      sql: `SELECT * FROM meetings WHERE host_id = ? AND is_active = 1 AND scheduled_for IS NOT NULL AND is_deleted = 0 ORDER BY scheduled_for ASC`,
+      args: [host_id]
+    });
+    return res.rows as unknown as Meeting[];
+  },
+  endMeeting: async (room_code: string) => {
+    await db.execute({
+      sql: `UPDATE meetings SET is_active = 0, ended_at = datetime('now') WHERE room_code = ?`,
+      args: [room_code]
+    });
+  },
+  getActive: async () => {
+    const res = await db.execute(`SELECT * FROM meetings WHERE is_active = 1 AND scheduled_for IS NULL AND is_deleted = 0`);
+    return res.rows as unknown as Meeting[];
+  },
+  deleteMeeting: async (id: string, host_id: string) => {
+    await db.execute({
+      sql: `UPDATE meetings SET is_deleted = 1 WHERE id = ? AND host_id = ?`,
+      args: [id, host_id]
+    });
+  },
 };
 
 // Recording queries
-export const recordingQueries: Record<string, Statement> = {
-  create: db.prepare(`
-    INSERT INTO recordings (id, meeting_id, egress_id, status, file_url)
-    VALUES (?, ?, ?, ?, ?)
-  `),
-  updateStatus: db.prepare(`
-    UPDATE recordings SET status = ? WHERE egress_id = ?
-  `),
-  getByMeetingId: db.prepare(`SELECT * FROM recordings WHERE meeting_id = ? ORDER BY created_at DESC`),
-  getAllForUser: db.prepare(`
-    SELECT DISTINCT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
-    FROM recordings r
-    JOIN meetings m ON r.meeting_id = m.id
-    LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id
-    WHERE m.host_id = ? OR mp.user_id = ?
-    ORDER BY r.created_at DESC
-  `),
-  deleteById: db.prepare(`DELETE FROM recordings WHERE id = ?`),
-  findById: db.prepare(`SELECT * FROM recordings WHERE id = ?`),
+export const recordingQueries = {
+  create: async (id: string, meeting_id: string, egress_id: string, status: string, file_url: string | null) => {
+    await db.execute({
+      sql: `INSERT INTO recordings (id, meeting_id, egress_id, status, file_url) VALUES (?, ?, ?, ?, ?)`,
+      args: [id, meeting_id, egress_id, status, file_url]
+    });
+  },
+  updateStatus: async (status: string, egress_id: string) => {
+    await db.execute({
+      sql: `UPDATE recordings SET status = ? WHERE egress_id = ?`,
+      args: [status, egress_id]
+    });
+  },
+  getByMeetingId: async (meeting_id: string) => {
+    const res = await db.execute({
+      sql: `SELECT * FROM recordings WHERE meeting_id = ? ORDER BY created_at DESC`,
+      args: [meeting_id]
+    });
+    return res.rows as unknown as Recording[];
+  },
+  getAllForUser: async (host_id: string, user_id: string) => {
+    const res = await db.execute({
+      sql: `
+        SELECT DISTINCT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
+        FROM recordings r
+        JOIN meetings m ON r.meeting_id = m.id
+        LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id
+        WHERE m.host_id = ? OR mp.user_id = ?
+        ORDER BY r.created_at DESC
+      `,
+      args: [host_id, user_id]
+    });
+    return res.rows as unknown as Recording[];
+  },
+  deleteById: async (id: string) => {
+    await db.execute({ sql: `DELETE FROM recordings WHERE id = ?`, args: [id] });
+  },
+  findById: async (id: string) => {
+    const res = await db.execute({ sql: `SELECT * FROM recordings WHERE id = ?`, args: [id] });
+    return res.rows[0] as unknown as Recording | undefined;
+  },
 };
 
 export default db;

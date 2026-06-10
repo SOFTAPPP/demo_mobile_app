@@ -55,7 +55,7 @@ router.post('/signup', authLimiter, async (req: Request, res: Response): Promise
     const { name, email, password, role } = parsedBody.data;
 
     // Check if user already exists
-    const existing = userQueries.findByEmail.get(email) as User | undefined;
+    const existing = await userQueries.findByEmail(email);
     if (existing) {
       res.status(409).json({ error: 'Email already registered' });
       return;
@@ -69,7 +69,7 @@ router.post('/signup', authLimiter, async (req: Request, res: Response): Promise
     const avatarColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
     const userRole = role === 'teacher' ? 'teacher' : 'student';
 
-    userQueries.create.run(userId, name, email, passwordHash, userRole, avatarColor);
+    await userQueries.create(userId, name, email, passwordHash, userRole, avatarColor);
 
     const tokens = {
       accessToken: jwtService.signAccessToken({ userId, email, role: userRole }),
@@ -102,7 +102,7 @@ router.post('/login', authLimiter, async (req: Request, res: Response): Promise<
     }
     const { email, password } = parsedBody.data;
 
-    const user = userQueries.findByEmail.get(email) as User | undefined;
+    const user = await userQueries.findByEmail(email);
     if (!user) {
       res.status(401).json({ error: 'Invalid email or password' });
       return;
@@ -141,9 +141,9 @@ router.post('/login', authLimiter, async (req: Request, res: Response): Promise<
 /**
  * GET /api/auth/me
  */
-router.get('/me', authMiddleware, (req: AuthRequest, res: Response): void => {
+router.get('/me', authMiddleware, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const user = userQueries.findById.get(req.user!.userId) as User | undefined;
+    const user = await userQueries.findById(req.user!.userId);
     if (!user) {
       res.status(404).json({ error: 'User not found' });
       return;

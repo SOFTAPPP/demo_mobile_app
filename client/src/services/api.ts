@@ -2,10 +2,10 @@ import axios from 'axios';
 
 const api = axios.create({
   // Option 1: Cloudflare Tunnel (For Mobile Demoing or sharing link)
-  baseURL: import.meta.env.VITE_API_URL || 'https://670a-2409-40e0-101b-4c7c-2933-845e-8d59-b44b.ngrok-free.app/api',
+  //baseURL: import.meta.env.VITE_API_URL || 'https://670a-2409-40e0-101b-4c7c-2933-845e-8d59-b44b.ngrok-free.app/api',
 
   // Option 2: Local Web Browser / Pinggy Testing (Uncomment this line)
-  //baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL: import.meta.env.VITE_API_URL || '/api',
 
   // Option 3: Local Android Emulator Testing WITHOUT Cloudflare (Uncomment this line, and comment out the others)
   // baseURL: import.meta.env.VITE_API_URL || 'http://10.0.2.2:3001/api',

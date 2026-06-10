@@ -101,6 +101,49 @@ exports.livekitService = {
         catch (error) {
             console.error(`Failed to delete LiveKit room ${roomName}:`, error);
         }
+    },
+    /**
+     * Start recording a LiveKit room and upload directly to Cloudflare R2
+     */
+    async startRecording(roomName) {
+        if (!this.isConfigured())
+            throw new Error('LiveKit is not configured');
+        if (!process.env.S3_ACCESS_KEY || !process.env.S3_SECRET_KEY || !process.env.S3_ENDPOINT || !process.env.S3_BUCKET) {
+            throw new Error('Cloudflare R2 credentials are not fully configured in .env');
+        }
+        const { apiKey, apiSecret, url } = config_1.config.livekit;
+        const httpUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
+        const egressClient = new livekit_server_sdk_1.EgressClient(httpUrl, apiKey, apiSecret);
+        const timestamp = Date.now();
+        const fileName = `recordings/${roomName}-${timestamp}.mp4`;
+        const s3Upload = new livekit_server_sdk_1.S3Upload({
+            accessKey: process.env.S3_ACCESS_KEY,
+            secret: process.env.S3_SECRET_KEY,
+            endpoint: process.env.S3_ENDPOINT,
+            bucket: process.env.S3_BUCKET,
+        });
+        const fileOutput = new livekit_server_sdk_1.EncodedFileOutput({
+            filepath: fileName,
+            fileType: livekit_server_sdk_1.EncodedFileType.MP4,
+            output: { case: 's3', value: s3Upload },
+        });
+        const info = await egressClient.startRoomCompositeEgress(roomName, {
+            file: fileOutput,
+        });
+        const publicUrl = process.env.S3_PUBLIC_URL || '';
+        const fileUrl = publicUrl ? `${publicUrl}/${fileName}` : fileName;
+        return { egressId: info.egressId, fileUrl };
+    },
+    /**
+     * Stop a recording
+     */
+    async stopRecording(egressId) {
+        if (!this.isConfigured())
+            return;
+        const { apiKey, apiSecret, url } = config_1.config.livekit;
+        const httpUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
+        const egressClient = new livekit_server_sdk_1.EgressClient(httpUrl, apiKey, apiSecret);
+        await egressClient.stopEgress(egressId);
     }
 };
 //# sourceMappingURL=livekit.service.js.map

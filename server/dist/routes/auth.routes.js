@@ -52,7 +52,7 @@ router.post('/signup', authLimiter, async (req, res) => {
         }
         const { name, email, password, role } = parsedBody.data;
         // Check if user already exists
-        const existing = db_1.userQueries.findByEmail.get(email);
+        const existing = await db_1.userQueries.findByEmail(email);
         if (existing) {
             res.status(409).json({ error: 'Email already registered' });
             return;
@@ -63,13 +63,15 @@ router.post('/signup', authLimiter, async (req, res) => {
         const userId = (0, uuid_1.v4)();
         const avatarColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
         const userRole = role === 'teacher' ? 'teacher' : 'student';
-        db_1.userQueries.create.run(userId, name, email, passwordHash, userRole, avatarColor);
+        await db_1.userQueries.create(userId, name, email, passwordHash, userRole, avatarColor);
         const tokens = {
             accessToken: jwt_service_1.jwtService.signAccessToken({ userId, email, role: userRole }),
             refreshToken: jwt_service_1.jwtService.signRefreshToken({ userId, email, role: userRole }),
         };
-        res.cookie('accessToken', tokens.accessToken, { ...cookieOptions, maxAge: 15 * 60 * 1000 }); // 15 mins
-        res.cookie('refreshToken', tokens.refreshToken, { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 }); // 7 days
+        // No maxAge provided: these become strict Session Cookies.
+        // The browser will automatically delete them when the browser closes.
+        res.cookie('accessToken', tokens.accessToken, cookieOptions);
+        res.cookie('refreshToken', tokens.refreshToken, cookieOptions);
         res.status(201).json({
             user: { id: userId, name, email, role: userRole, avatar_color: avatarColor }
         });
@@ -90,7 +92,7 @@ router.post('/login', authLimiter, async (req, res) => {
             return;
         }
         const { email, password } = parsedBody.data;
-        const user = db_1.userQueries.findByEmail.get(email);
+        const user = await db_1.userQueries.findByEmail(email);
         if (!user) {
             res.status(401).json({ error: 'Invalid email or password' });
             return;
@@ -104,8 +106,9 @@ router.post('/login', authLimiter, async (req, res) => {
             accessToken: jwt_service_1.jwtService.signAccessToken({ userId: user.id, email: user.email, role: user.role }),
             refreshToken: jwt_service_1.jwtService.signRefreshToken({ userId: user.id, email: user.email, role: user.role }),
         };
-        res.cookie('accessToken', tokens.accessToken, { ...cookieOptions, maxAge: 15 * 60 * 1000 });
-        res.cookie('refreshToken', tokens.refreshToken, { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 });
+        // No maxAge provided: these become strict Session Cookies.
+        res.cookie('accessToken', tokens.accessToken, cookieOptions);
+        res.cookie('refreshToken', tokens.refreshToken, cookieOptions);
         res.json({
             user: {
                 id: user.id,
@@ -124,9 +127,9 @@ router.post('/login', authLimiter, async (req, res) => {
 /**
  * GET /api/auth/me
  */
-router.get('/me', auth_middleware_1.authMiddleware, (req, res) => {
+router.get('/me', auth_middleware_1.authMiddleware, async (req, res) => {
     try {
-        const user = db_1.userQueries.findById.get(req.user.userId);
+        const user = await db_1.userQueries.findById(req.user.userId);
         if (!user) {
             res.status(404).json({ error: 'User not found' });
             return;
@@ -163,7 +166,7 @@ router.post('/refresh', (req, res) => {
             email: decoded.email,
             role: decoded.role,
         });
-        res.cookie('accessToken', newAccessToken, { ...cookieOptions, maxAge: 15 * 60 * 1000 });
+        res.cookie('accessToken', newAccessToken, cookieOptions);
         res.json({ success: true });
     }
     catch (error) {

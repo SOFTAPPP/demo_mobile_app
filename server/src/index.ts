@@ -73,9 +73,13 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 });
 
 // Start server
-server.listen(config.port, () => {
-  logger.info(`Server started on port ${config.port}`);
-  console.log('');
+import { initializeDatabase } from './models/db';
+
+const start = async () => {
+  await initializeDatabase();
+  server.listen(config.port, () => {
+    logger.info(`Server started on port ${config.port}`);
+    console.log('');
   console.log('🎵 ═══════════════════════════════════════════════════');
   console.log('   Sangeet Arghya — Nada Upasana Academy');
   console.log('   Meeting Server');
@@ -85,7 +89,9 @@ server.listen(config.port, () => {
   console.log(`   🔑 LiveKit: ${config.livekit.apiKey ? '✅ Configured' : '⚠️  Not configured (demo mode)'}`);
   console.log('═══════════════════════════════════════════════════════');
   console.log('');
-});
+  });
+};
+start();
 
 // Graceful Shutdown
 const shutdown = () => {
@@ -97,6 +103,9 @@ const shutdown = () => {
       db.close();
       logger.info('Database connection closed.');
       process.exit(0);
+    }).catch((err) => {
+      logger.error('Failed to close database:', err);
+      process.exit(1);
     });
   });
 };
