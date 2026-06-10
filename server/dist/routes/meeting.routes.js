@@ -38,7 +38,6 @@ const uuid_1 = require("uuid");
 const db_1 = __importStar(require("../models/db"));
 const livekit_service_1 = require("../services/livekit.service");
 const auth_middleware_1 = require("../middleware/auth.middleware");
-const index_1 = require("../index");
 const router = (0, express_1.Router)();
 // All meeting routes require authentication
 router.use(auth_middleware_1.authMiddleware);
@@ -327,16 +326,11 @@ router.post('/record/start', async (req, res) => {
             res.status(404).json({ error: 'Meeting not found' });
             return;
         }
-        if (meeting.host_id !== req.user.userId) {
-            res.status(403).json({ error: 'Only the host can start recording' });
-            return;
-        }
         const { egressId, fileUrl } = await livekit_service_1.livekitService.startRecording(roomCode);
         // Save recording to DB
         const recordingId = (0, uuid_1.v4)();
-        await db_1.recordingQueries.create(recordingId, meeting.id, egressId, 'recording', fileUrl);
+        await db_1.recordingQueries.create(recordingId, meeting.id, req.user.userId, egressId, 'recording', fileUrl);
         res.json({ message: 'Recording started', egressId, fileUrl });
-        index_1.io.to(roomCode).emit('recording-started', { egressId });
     }
     catch (error) {
         console.error('Start recording error:', error);
@@ -358,11 +352,6 @@ router.post('/record/stop', async (req, res) => {
         // Update DB status
         await db_1.recordingQueries.updateStatus('completed', egressId);
         res.json({ message: 'Recording stopped' });
-        // Find the roomCode by looking up the meeting or egress ID
-        // We can emit to all since the room is usually specific, but we'll emit to the roomCode
-        // A simple hack is just to broadcast to everyone, or get the meeting.
-        // For now, let's just do a generic broadcast since it's a demo
-        index_1.io.emit('recording-stopped', { egressId });
     }
     catch (error) {
         console.error('Stop recording error:', error);
@@ -381,9 +370,8 @@ router.delete('/recordings/:id', async (req, res) => {
             res.status(404).json({ error: 'Recording not found' });
             return;
         }
-        const meeting = await db_1.meetingQueries.findById(recording.meeting_id);
-        if (meeting.host_id !== req.user.userId) {
-            res.status(403).json({ error: 'Only the host can delete this recording' });
+        if (recording.user_id !== '' && recording.user_id !== req.user.userId) {
+            res.status(403).json({ error: 'Only the owner can delete this recording' });
             return;
         }
         await db_1.recordingQueries.deleteById(id);
@@ -405,7 +393,7 @@ router.get('/recordings/all', async (req, res) => {
             res.status(401).json({ error: 'Unauthorized' });
             return;
         }
-        const recordings = await db_1.recordingQueries.getAllForUser(userId, userId);
+        const recordings = await db_1.recordingQueries.getAllForUser(userId);
         res.json({ recordings });
     }
     catch (error) {

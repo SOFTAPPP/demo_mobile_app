@@ -22,7 +22,8 @@ exports.config = {
         'http://localhost:5174',
         'http://localhost:3000',
         'http://localhost',
-        'capacitor://localhost'
-    ],
+        'capacitor://localhost',
+        process.env.CLIENT_URL || ''
+    ].filter(Boolean),
 };
 //# sourceMappingURL=index.js.map

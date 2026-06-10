@@ -31,8 +31,8 @@ const loginSchema = zod_1.z.object({
 });
 const cookieOptions = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true,
+    sameSite: 'none',
     path: '/',
 };
 // Random avatar colors matching the Sangeet Arghya theme

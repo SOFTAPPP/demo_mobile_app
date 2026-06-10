@@ -61,6 +61,12 @@ export const initializeDatabase = async () => {
     // Column already exists, ignore
   }
 
+  try {
+    await db.execute(`ALTER TABLE recordings ADD COLUMN user_id TEXT DEFAULT '';`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
+
   // Create meeting participants table
   await db.execute(`
     CREATE TABLE IF NOT EXISTS meeting_participants (
@@ -123,6 +129,7 @@ export interface Meeting {
 export interface Recording {
   id: string;
   meeting_id: string;
+  user_id: string;
   egress_id: string;
   status: 'recording' | 'completed' | 'failed';
   file_url: string | null;
@@ -218,10 +225,10 @@ export const meetingQueries = {
 
 // Recording queries
 export const recordingQueries = {
-  create: async (id: string, meeting_id: string, egress_id: string, status: string, file_url: string | null) => {
+  create: async (id: string, meeting_id: string, user_id: string, egress_id: string, status: string, file_url: string | null) => {
     await db.execute({
-      sql: `INSERT INTO recordings (id, meeting_id, egress_id, status, file_url) VALUES (?, ?, ?, ?, ?)`,
-      args: [id, meeting_id, egress_id, status, file_url]
+      sql: `INSERT INTO recordings (id, meeting_id, user_id, egress_id, status, file_url) VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [id, meeting_id, user_id, egress_id, status, file_url]
     });
   },
   updateStatus: async (status: string, egress_id: string) => {
@@ -237,17 +244,16 @@ export const recordingQueries = {
     });
     return res.rows as unknown as Recording[];
   },
-  getAllForUser: async (host_id: string, user_id: string) => {
+  getAllForUser: async (user_id: string) => {
     const res = await db.execute({
       sql: `
-        SELECT DISTINCT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
+        SELECT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
         FROM recordings r
         JOIN meetings m ON r.meeting_id = m.id
-        LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id
-        WHERE m.host_id = ? OR mp.user_id = ?
+        WHERE r.user_id = ? OR r.user_id = ''
         ORDER BY r.created_at DESC
       `,
-      args: [host_id, user_id]
+      args: [user_id]
     });
     return res.rows as unknown as Recording[];
   },

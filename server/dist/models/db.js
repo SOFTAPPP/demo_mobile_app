@@ -60,6 +60,12 @@ const initializeDatabase = async () => {
     catch (e) {
         // Column already exists, ignore
     }
+    try {
+        await db.execute(`ALTER TABLE recordings ADD COLUMN user_id TEXT DEFAULT '';`);
+    }
+    catch (e) {
+        // Column already exists, ignore
+    }
     // Create meeting participants table
     await db.execute(`
     CREATE TABLE IF NOT EXISTS meeting_participants (
@@ -182,10 +188,10 @@ exports.meetingQueries = {
 };
 // Recording queries
 exports.recordingQueries = {
-    create: async (id, meeting_id, egress_id, status, file_url) => {
+    create: async (id, meeting_id, user_id, egress_id, status, file_url) => {
         await db.execute({
-            sql: `INSERT INTO recordings (id, meeting_id, egress_id, status, file_url) VALUES (?, ?, ?, ?, ?)`,
-            args: [id, meeting_id, egress_id, status, file_url]
+            sql: `INSERT INTO recordings (id, meeting_id, user_id, egress_id, status, file_url) VALUES (?, ?, ?, ?, ?, ?)`,
+            args: [id, meeting_id, user_id, egress_id, status, file_url]
         });
     },
     updateStatus: async (status, egress_id) => {
@@ -201,17 +207,16 @@ exports.recordingQueries = {
         });
         return res.rows;
     },
-    getAllForUser: async (host_id, user_id) => {
+    getAllForUser: async (user_id) => {
         const res = await db.execute({
             sql: `
-        SELECT DISTINCT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
+        SELECT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
         FROM recordings r
         JOIN meetings m ON r.meeting_id = m.id
-        LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id
-        WHERE m.host_id = ? OR mp.user_id = ?
+        WHERE r.user_id = ? OR r.user_id = ''
         ORDER BY r.created_at DESC
       `,
-            args: [host_id, user_id]
+            args: [user_id]
         });
         return res.rows;
     },

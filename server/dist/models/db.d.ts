@@ -24,6 +24,7 @@ export interface Meeting {
 export interface Recording {
     id: string;
     meeting_id: string;
+    user_id: string;
     egress_id: string;
     status: 'recording' | 'completed' | 'failed';
     file_url: string | null;
@@ -48,10 +49,10 @@ export declare const meetingQueries: {
     deleteMeeting: (id: string, host_id: string) => Promise<void>;
 };
 export declare const recordingQueries: {
-    create: (id: string, meeting_id: string, egress_id: string, status: string, file_url: string | null) => Promise<void>;
+    create: (id: string, meeting_id: string, user_id: string, egress_id: string, status: string, file_url: string | null) => Promise<void>;
     updateStatus: (status: string, egress_id: string) => Promise<void>;
     getByMeetingId: (meeting_id: string) => Promise<Recording[]>;
-    getAllForUser: (host_id: string, user_id: string) => Promise<Recording[]>;
+    getAllForUser: (user_id: string) => Promise<Recording[]>;
     deleteById: (id: string) => Promise<void>;
     findById: (id: string) => Promise<Recording | undefined>;
 };

@@ -54,10 +54,12 @@ const app = (0, express_1.default)();
 exports.app = app;
 const server = http_1.default.createServer(app);
 exports.server = server;
+// Trust the Render reverse proxy for rate-limiting
+app.set('trust proxy', 1);
 // Socket.io for non-media real-time events (chat, notifications)
 const io = new socket_io_1.Server(server, {
     cors: {
-        origin: config_1.config.corsOrigins,
+        origin: true,
         methods: ['GET', 'POST'],
         credentials: true,
     },
@@ -66,7 +68,7 @@ exports.io = io;
 // Middleware
 app.use((0, helmet_1.default)());
 app.use((0, compression_1.default)());
-app.use((0, cors_1.default)({ origin: config_1.config.corsOrigins, credentials: true }));
+app.use((0, cors_1.default)({ origin: true, credentials: true }));
 app.use(express_1.default.json());
 app.use((0, cookie_parser_1.default)());
 // Morgan request logging mapped to Winston

@@ -129,30 +129,6 @@ export default function Meeting() {
       navigate('/meeting-ended', { state: { roomCode } });
     });
 
-    socket.on('recording-started', (data: { egressId: string }) => {
-      setEgressId(data.egressId);
-      setIsRecording(prev => {
-        if (!prev) {
-          playNotificationSound('start');
-          setRecordingToast({ show: true, type: 'start' });
-          setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
-        }
-        return true;
-      });
-    });
-
-    socket.on('recording-stopped', () => {
-      setEgressId(null);
-      setIsRecording(prev => {
-        if (prev) {
-          playNotificationSound('stop');
-          setRecordingToast({ show: true, type: 'stop' });
-          setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
-        }
-        return false;
-      });
-    });
-
     return () => {
       socket.disconnect();
     };
@@ -267,13 +243,15 @@ export default function Meeting() {
             joinStartTime={location.state?.joinStartTime}
             isRecording={isRecording}
             egressId={egressId}
-            onOptimisticStart={() => {
+            onOptimisticStart={(newEgressId) => {
+              setEgressId(newEgressId);
               setIsRecording(true);
               playNotificationSound('start');
               setRecordingToast({ show: true, type: 'start' });
               setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
             }}
             onOptimisticStop={() => {
+              setEgressId(null);
               setIsRecording(false);
               playNotificationSound('stop');
               setRecordingToast({ show: true, type: 'stop' });
@@ -360,7 +338,7 @@ function BrandedMeetingUI({
   joinStartTime?: number;
   isRecording?: boolean;
   egressId: string | null;
-  onOptimisticStart?: () => void;
+  onOptimisticStart?: (egressId: string) => void;
   onOptimisticStop?: () => void;
 }) {
   const room = useRoomContext();
@@ -545,8 +523,6 @@ function BrandedMeetingUI({
         if (onOptimisticStop) onOptimisticStop();
         await api.post('/meetings/record/stop', { egressId });
       } else {
-        if (onOptimisticStart) onOptimisticStart();
-
         let totalTracks = 0;
         room.remoteParticipants.forEach((p) => { totalTracks += p.trackPublications.size; });
         totalTracks += room.localParticipant.trackPublications.size;
@@ -578,7 +554,8 @@ function BrandedMeetingUI({
           }
         }
 
-        await api.post('/meetings/record/start', { roomCode });
+        const { data } = await api.post('/meetings/record/start', { roomCode });
+        if (onOptimisticStart) onOptimisticStart(data.egressId);
       }
     } catch (e: any) {
       console.error('Failed to toggle recording', e);
@@ -586,7 +563,7 @@ function BrandedMeetingUI({
 
       // Revert optimistic UI on failure
       if (isRecording) {
-        if (onOptimisticStart) onOptimisticStart();
+        if (onOptimisticStart && egressId) onOptimisticStart(egressId);
       } else {
         if (onOptimisticStop) onOptimisticStop();
       }
@@ -774,21 +751,21 @@ function BrandedMeetingUI({
             <span className="control-btn__tooltip">Leave</span>
           </button>
 
+          <button
+            className={`control-btn ${isRecording ? 'control-btn--active' : 'control-btn--default'}`}
+            onClick={handleRecordToggle}
+            disabled={isRecordLoading}
+            style={isRecording
+              ? { background: '#DC2626', color: 'white', borderColor: '#DC2626', animation: 'pulse 2s infinite' }
+              : { background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.3)' }
+            }
+          >
+            {isRecording ? <Square size={22} fill="currentColor" /> : <Disc size={22} />}
+            <span className="control-btn__tooltip">{isRecording ? 'Stop Recording' : 'Record Class'}</span>
+          </button>
+
           {isHost && (
             <>
-              <button
-                className={`control-btn ${isRecording ? 'control-btn--active' : 'control-btn--default'}`}
-                onClick={handleRecordToggle}
-                disabled={isRecordLoading}
-                style={isRecording
-                  ? { background: '#DC2626', color: 'white', borderColor: '#DC2626', animation: 'pulse 2s infinite' }
-                  : { background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.3)' }
-                }
-              >
-                {isRecording ? <Square size={22} fill="currentColor" /> : <Disc size={22} />}
-                <span className="control-btn__tooltip">{isRecording ? 'Stop Recording' : 'Record Class'}</span>
-              </button>
-
               <button className="control-btn control-btn--end" onClick={() => setConfirmAction('end')}>
                 <PhoneOff size={22} />
                 <span className="control-btn__tooltip">End for All</span>

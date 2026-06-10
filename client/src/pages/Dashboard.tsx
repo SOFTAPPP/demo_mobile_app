@@ -840,7 +840,7 @@ export default function Dashboard() {
                         <span style={{ fontSize: '0.8rem', color: 'gray', padding: '6px 14px', background: 'rgba(0,0,0,0.05)', borderRadius: '6px' }}>Processing...</span>
                       )}
 
-                      {rec.host_id === user?.id && (
+                      {(rec.user_id === user?.id || (rec.user_id === '' && rec.host_id === user?.id)) && (
                         <button
                           onClick={() => setDeleteRecordingId(rec.id)}
                           style={{
