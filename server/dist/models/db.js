@@ -214,8 +214,8 @@ exports.recordingQueries = {
         SELECT DISTINCT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
         FROM recordings r
         JOIN meetings m ON r.meeting_id = m.id
-        LEFT JOIN recent_meetings rm ON m.id = rm.meeting_id AND rm.user_id = ?
-        WHERE m.host_id = ? OR rm.user_id = ? OR r.user_id = ?
+        LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id AND mp.user_id = ?
+        WHERE m.host_id = ? OR mp.user_id = ? OR r.user_id = ?
         ORDER BY r.created_at DESC
       `,
             args: [user_id, user_id, user_id, user_id]

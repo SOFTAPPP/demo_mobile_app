@@ -443,7 +443,7 @@ router.get('/:id/recordings', async (req, res) => {
         const meeting = await db_1.meetingQueries.findById(id);
         // Return all recordings for this meeting
         const recordings = allRecordings.map(r => ({ ...r, host_id: meeting?.host_id, meeting_title: meeting?.title }));
-        // Sync stale recordings
+        // Sync stale recordingss
         for (const r of recordings) {
             if (r.status === 'recording') {
                 const status = await livekit_service_1.livekitService.getEgressStatus(r.egress_id);
