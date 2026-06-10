@@ -64,6 +64,14 @@ io.on('connection', (socket) => {
     console.log(`👤 ${socket.id} left room ${roomCode}`);
   });
 
+  socket.on('recording-started', (roomCode: string) => {
+    socket.to(roomCode).emit('recording-started');
+  });
+
+  socket.on('recording-stopped', (roomCode: string) => {
+    socket.to(roomCode).emit('recording-stopped');
+  });
+
   socket.on('disconnect', () => {
     logger.info(`🔌 Socket disconnected: ${socket.id}`);
   });

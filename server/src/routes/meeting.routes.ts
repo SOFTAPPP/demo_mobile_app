@@ -329,6 +329,11 @@ router.post('/record/start', async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
+    if (meeting.host_id !== req.user!.userId) {
+      res.status(403).json({ error: 'Only the host can record' });
+      return;
+    }
+
     const { egressId, fileUrl } = await livekitService.startRecording(roomCode);
     
     // Save recording to DB
@@ -355,9 +360,15 @@ router.post('/record/start', async (req: AuthRequest, res: Response): Promise<vo
  */
 router.post('/record/stop', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { egressId } = req.body;
-    if (!egressId) {
-      res.status(400).json({ error: 'Egress ID is required' });
+    const { egressId, roomCode } = req.body;
+    if (!egressId || !roomCode) {
+      res.status(400).json({ error: 'Egress ID and roomCode are required' });
+      return;
+    }
+
+    const meeting = await meetingQueries.findByCode(roomCode);
+    if (!meeting || meeting.host_id !== req.user!.userId) {
+      res.status(403).json({ error: 'Only the host can stop recording' });
       return;
     }
 
@@ -395,14 +406,9 @@ router.delete('/recordings/:id', async (req: AuthRequest, res: Response): Promis
       return;
     }
 
-    if (recording.user_id === '') {
-      const meeting = await meetingQueries.findById(recording.meeting_id);
-      if (meeting?.host_id !== req.user!.userId) {
-        res.status(403).json({ error: 'Only the host can delete legacy recordings' });
-        return;
-      }
-    } else if (recording.user_id !== req.user!.userId) {
-      res.status(403).json({ error: 'Only the owner can delete this recording' });
+    const meeting = await meetingQueries.findById(recording.meeting_id);
+    if (!meeting || meeting.host_id !== req.user!.userId) {
+      res.status(403).json({ error: 'Only the meeting host can delete recordings' });
       return;
     }
 
@@ -445,10 +451,8 @@ router.get('/:id/recordings', async (req: AuthRequest, res: Response): Promise<v
     const allRecordings = await recordingQueries.getByMeetingId(id as string);
     const meeting = await meetingQueries.findById(id as string);
     
-    // Filter recordings so users only see their own (or legacy host recordings)
-    const recordings = allRecordings
-      .filter(r => r.user_id === userId || (r.user_id === '' && meeting?.host_id === userId))
-      .map(r => ({ ...r, host_id: meeting?.host_id, meeting_title: meeting?.title }));
+    // Return all recordings for this meeting
+    const recordings = allRecordings.map(r => ({ ...r, host_id: meeting?.host_id, meeting_title: meeting?.title }));
       
     res.json({ recordings });
   } catch (error) {

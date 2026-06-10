@@ -226,9 +226,10 @@ export const meetingQueries = {
 // Recording queries
 export const recordingQueries = {
   create: async (id: string, meeting_id: string, user_id: string, egress_id: string, status: string, file_url: string | null) => {
+    // Legacy support: We ignore user_id entirely and save an empty string since recordings are tied to the meeting
     await db.execute({
       sql: `INSERT INTO recordings (id, meeting_id, user_id, egress_id, status, file_url) VALUES (?, ?, ?, ?, ?, ?)`,
-      args: [id, meeting_id, user_id, egress_id, status, file_url]
+      args: [id, meeting_id, '', egress_id, status, file_url]
     });
   },
   updateStatus: async (status: string, egress_id: string) => {
@@ -250,10 +251,10 @@ export const recordingQueries = {
         SELECT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
         FROM recordings r
         JOIN meetings m ON r.meeting_id = m.id
-        WHERE r.user_id = ? OR (r.user_id = '' AND m.host_id = ?)
+        WHERE m.host_id = ?
         ORDER BY r.created_at DESC
       `,
-      args: [user_id, user_id]
+      args: [user_id]
     });
     return res.rows as unknown as Recording[];
   },

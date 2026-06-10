@@ -129,6 +129,19 @@ export default function Meeting() {
       navigate('/meeting-ended', { state: { roomCode } });
     });
 
+    socket.on('recording-started', () => {
+      setIsRecording(true);
+      setRecordingToast({ show: true, type: 'start' });
+      playNotificationSound('start');
+    });
+
+    socket.on('recording-stopped', () => {
+      setIsRecording(false);
+      setRecordingToast({ show: true, type: 'stop' });
+      playNotificationSound('stop');
+      setEgressId(null);
+    });
+
     return () => {
       socket.disconnect();
     };
@@ -527,11 +540,19 @@ function BrandedMeetingUI({
       tracks.length <= 4 ? 'video-grid--4' : 'video-grid--many';
 
   const handleRecordToggle = async () => {
+    if (!isHost) return;
     try {
       setIsRecordLoading(true);
       if (isRecording && egressId) {
         if (onOptimisticStop) onOptimisticStop();
-        await api.post('/meetings/record/stop', { egressId });
+        
+        // Broadcast
+        const socketUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : '/';
+        const tempSocket = socketIO(socketUrl);
+        tempSocket.emit('recording-stopped', roomCode);
+        tempSocket.disconnect();
+
+        await api.post('/meetings/record/stop', { egressId, roomCode });
       } else {
         let totalTracks = 0;
         room.remoteParticipants.forEach((p) => { totalTracks += p.trackPublications.size; });
@@ -566,6 +587,13 @@ function BrandedMeetingUI({
 
         // Optimistic UI for start
         if (onOptimisticStart) onOptimisticStart('temp_id_loading');
+
+        // Broadcast
+        const socketUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : '/';
+        const tempSocket = socketIO(socketUrl);
+        tempSocket.emit('recording-started', roomCode);
+        tempSocket.disconnect();
+
         const { data } = await api.post('/meetings/record/start', { roomCode });
         // Update with real ID once we have it
         if (onOptimisticStart) onOptimisticStart(data.egressId);
