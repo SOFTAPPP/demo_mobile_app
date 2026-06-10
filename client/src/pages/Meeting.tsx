@@ -412,8 +412,19 @@ function BrandedMeetingUI({
   const [confirmAction, setConfirmAction] = useState<'leave' | 'end' | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
-  const displayMic = isMicrophoneEnabled;
-  const displayCam = isCameraEnabled;
+  const [optimisticMic, setOptimisticMic] = useState<boolean | null>(null);
+  const [optimisticCam, setOptimisticCam] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (optimisticMic === isMicrophoneEnabled) setOptimisticMic(null);
+  }, [isMicrophoneEnabled, optimisticMic]);
+
+  useEffect(() => {
+    if (optimisticCam === isCameraEnabled) setOptimisticCam(null);
+  }, [isCameraEnabled, optimisticCam]);
+
+  const displayMic = optimisticMic !== null ? optimisticMic : isMicrophoneEnabled;
+  const displayCam = optimisticCam !== null ? optimisticCam : isCameraEnabled;
 
   // Profiling Logs
   useEffect(() => {
@@ -469,18 +480,24 @@ function BrandedMeetingUI({
   };
 
   const toggleMic = async () => {
+    const nextState = !displayMic;
+    setOptimisticMic(nextState);
     try {
-      await localParticipant.setMicrophoneEnabled(!displayMic);
+      await localParticipant.setMicrophoneEnabled(nextState);
     } catch (e) {
       console.error('Mic toggle failed', e);
+      setOptimisticMic(null);
     }
   };
 
   const toggleCam = async () => {
+    const nextState = !displayCam;
+    setOptimisticCam(nextState);
     try {
-      await localParticipant.setCameraEnabled(!displayCam);
+      await localParticipant.setCameraEnabled(nextState);
     } catch (e) {
       console.error('Cam toggle failed', e);
+      setOptimisticCam(null);
     }
   };
 
