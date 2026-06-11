@@ -25,17 +25,15 @@ export const logger = winston.createLogger({
   ],
 });
 
-// If we're not in production then log to the `console` with a simpler format
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(new winston.transports.Console({
-    format: winston.format.combine(
-      winston.format.colorize(),
-      winston.format.printf(({ level, message, timestamp, stack }) => {
-        if (stack) {
-          return `[${timestamp}] ${level}: ${message}\n${stack}`;
-        }
-        return `[${timestamp}] ${level}: ${message}`;
-      })
-    ),
-  }));
-}
+// Log to the console in all environments so Render can display them
+logger.add(new winston.transports.Console({
+  format: winston.format.combine(
+    process.env.NODE_ENV === 'production' ? winston.format.uncolorize() : winston.format.colorize(),
+    winston.format.printf(({ level, message, timestamp, stack }) => {
+      if (stack) {
+        return `[${timestamp}] ${level}: ${message}\n${stack}`;
+      }
+      return `[${timestamp}] ${level}: ${message}`;
+    })
+  ),
+}));

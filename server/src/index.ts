@@ -105,7 +105,10 @@ const start = async () => {
     }
   });
 };
-start();
+start().catch((err) => {
+  logger.error('Failed to start server:', err);
+  process.exit(1);
+});
 
 const shutdown = () => {
   logger.info('SIGTERM/SIGINT received. Shutting down gracefully...');
