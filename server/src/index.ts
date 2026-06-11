@@ -37,6 +37,7 @@ app.use(compression());
 app.use(cors({
   origin: config.isProduction ? config.corsOrigins : true,
   credentials: true,
+  maxAge: 86400, // Cache preflight requests for 24 hours to speed up mobile APIs
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
