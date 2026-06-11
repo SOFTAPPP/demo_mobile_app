@@ -14,8 +14,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
-import { clearSharedRoom, getSharedRoom, roomOptions } from '../services/livekitPrewarm';
 import { getSocket, disconnectSocket } from '../services/socket';
+import { RoomOptions, VideoPresets } from 'livekit-client';
+
+const roomOptions: RoomOptions = {
+  adaptiveStream: true,
+  dynacast: true,
+  videoCaptureDefaults: { resolution: VideoPresets.h720.resolution },
+  audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  publishDefaults: { simulcast: true, red: true, dtx: false, videoEncoding: { maxBitrate: 2_000_000, maxFramerate: 60 }, audioPreset: { maxBitrate: 256_000 } }
+};
 import '../styles/meeting.css';
 
 const playSound = (type: 'record-start' | 'record-stop' | 'user-join' | 'user-leave') => {
@@ -105,7 +113,7 @@ export default function Meeting() {
   const [connectionError, setConnectionError] = useState<string>('');
   const [theme, setTheme] = useState<'light' | 'maroon'>('light');
   const [isHost, setIsHost] = useState(!!location.state?.isHost);
-  const prewarmedRoom = useRef(getSharedRoom());
+
 
   useEffect(() => {
     if (!roomCode) return;
@@ -116,7 +124,7 @@ export default function Meeting() {
 
     const onMeetingEnded = () => {
       if (isLeavingManually.current) return;
-      clearSharedRoom();
+
       navigate('/meeting-ended', { state: { roomCode } });
     };
 
@@ -165,7 +173,7 @@ export default function Meeting() {
 
   const handleLeave = useCallback(async () => {
     isLeavingManually.current = true;
-    clearSharedRoom();
+
     disconnectSocket();
     navigate('/dashboard');
   }, [isHost, roomCode, navigate]);
@@ -173,7 +181,7 @@ export default function Meeting() {
   const handleEnd = useCallback(() => {
     if (isHost) {
       isLeavingManually.current = true;
-      clearSharedRoom();
+
       disconnectSocket();
       navigate('/meeting-ended', { state: { roomCode } });
       api.post('/meetings/end', { roomCode }).catch(() => {});
@@ -216,16 +224,19 @@ export default function Meeting() {
     <MeetingErrorBoundary>
       <div className={`meeting-page ${theme === 'maroon' ? 'theme-maroon' : ''}`}>
         <LiveKitRoom
-          room={prewarmedRoom.current || undefined}
           serverUrl={livekitUrl}
           token={livekitToken}
-          options={prewarmedRoom.current ? undefined : roomOptions}
+          options={roomOptions}
           video={false}
           audio={false}
           onConnected={() => {
             hasConnected.current = true;
           }}
-          onDisconnected={() => {}}
+          onDisconnected={() => {
+            if (!isLeavingManually.current) {
+              navigate('/dashboard');
+            }
+          }}
           onError={(err) => {
             if (err.message && !err.message.includes('permission') && !err.message.includes('reconnect')) {
               setConnectionError(err.message);

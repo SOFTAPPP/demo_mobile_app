@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
-import { clearSharedRoom, prepareLiveKitRoom } from '../services/livekitPrewarm';
+
 import { getSocket, disconnectSocket } from '../services/socket';
 import '../styles/dashboard.css';
 import type { Meeting } from '../types';
@@ -72,8 +72,6 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    clearSharedRoom();
-    
     // Background prefetch for heavy Meeting component
     // This fixes the ~10s delay when clicking join/create
     const prefetchTimer = setTimeout(() => {
@@ -145,7 +143,6 @@ export default function Dashboard() {
         title: meetingTitle.trim() || 'Music Class',
       });
 
-      prepareLiveKitRoom(data.livekit.url, data.livekit.token);
 
       navigate(`/meeting/${data.meeting.room_code}`, {
         state: {
@@ -179,7 +176,6 @@ export default function Dashboard() {
         displayName: user?.name,
       });
 
-      prepareLiveKitRoom(data.livekit.url, data.livekit.token);
 
       navigate(`/meeting/${data.meeting.room_code}`, {
         state: {
@@ -233,7 +229,6 @@ export default function Dashboard() {
         displayName: user?.name,
       });
 
-      prepareLiveKitRoom(data.livekit.url, data.livekit.token);
 
       navigate(`/meeting/${data.meeting.room_code}`, {
         state: {
