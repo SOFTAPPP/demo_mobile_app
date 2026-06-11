@@ -416,7 +416,7 @@ export default function Dashboard() {
       {/* Main Content */}
       <main className="dashboard__main">
         {/* Header Greeting */}
-        <header className="dashboard__header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <header className="dashboard__header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
           <div>
             <h1 className="dashboard__greeting">
               {getGreeting()},{' '}

@@ -623,7 +623,7 @@ function BrandedMeetingUI({
 
         const { data } = await api.post('/meetings/record/start', { 
           roomCode,
-          publicUrl: import.meta.env.VITE_API_URL || window.location.origin 
+          publicUrl: window.location.origin 
         });
         // Update with real ID once we have it
         if (onOptimisticStart) onOptimisticStart(data.egressId);
