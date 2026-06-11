@@ -3,11 +3,11 @@ module.exports = {
     {
       name: 'sangeet-arghya-server',
       script: './dist/index.js',
-      instances: 'max', // Use all CPU cores for clustering
-      exec_mode: 'cluster',
+      instances: 1,
+      exec_mode: 'fork',
       autorestart: true,
       watch: false,
-      max_memory_restart: '1G',
+      max_memory_restart: '512M',
       env: {
         NODE_ENV: 'development',
       },

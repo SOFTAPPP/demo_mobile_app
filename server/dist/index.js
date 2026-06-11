@@ -48,32 +48,36 @@ const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const morgan_1 = __importDefault(require("morgan"));
 const config_1 = require("./config");
 const logger_1 = require("./lib/logger");
+const db_1 = require("./models/db");
 const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const meeting_routes_1 = __importDefault(require("./routes/meeting.routes"));
 const app = (0, express_1.default)();
 exports.app = app;
 const server = http_1.default.createServer(app);
 exports.server = server;
-// Trust the Render reverse proxy for rate-limiting
 app.set('trust proxy', 1);
-// Socket.io for non-media real-time events (chat, notifications)
 const io = new socket_io_1.Server(server, {
     cors: {
-        origin: true,
+        origin: config_1.config.isProduction ? config_1.config.corsOrigins : true,
         methods: ['GET', 'POST'],
         credentials: true,
     },
+    pingTimeout: 20000,
+    pingInterval: 10000,
+    transports: ['websocket', 'polling'],
 });
 exports.io = io;
-// Middleware
-app.use((0, helmet_1.default)());
+app.use((0, helmet_1.default)({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 app.use((0, compression_1.default)());
-app.use((0, cors_1.default)({ origin: true, credentials: true }));
-app.use(express_1.default.json());
+app.use((0, cors_1.default)({
+    origin: config_1.config.isProduction ? config_1.config.corsOrigins : true,
+    credentials: true,
+}));
+app.use(express_1.default.json({ limit: '1mb' }));
 app.use((0, cookie_parser_1.default)());
-// Morgan request logging mapped to Winston
 app.use((0, morgan_1.default)('combined', { stream: { write: (message) => logger_1.logger.info(message.trim()) } }));
-// Health check
 app.get('/api/health', (_req, res) => {
     res.json({
         status: 'ok',
@@ -81,60 +85,64 @@ app.get('/api/health', (_req, res) => {
         livekit_configured: !!(config_1.config.livekit.apiKey && config_1.config.livekit.apiSecret),
     });
 });
-// Routes
 app.use('/api/auth', auth_routes_1.default);
 app.use('/api/meetings', meeting_routes_1.default);
-// Socket.io events (for future chat/reactions features)
 io.on('connection', (socket) => {
-    console.log(`🔌 Socket connected: ${socket.id}`);
+    logger_1.logger.debug(`Socket connected: ${socket.id}`);
     socket.on('join-room', (roomCode) => {
+        if (typeof roomCode !== 'string' || roomCode.length > 20)
+            return;
         socket.join(roomCode);
-        console.log(`👤 ${socket.id} joined room ${roomCode}`);
+        logger_1.logger.debug(`${socket.id} joined room ${roomCode}`);
     });
     socket.on('leave-room', (roomCode) => {
+        if (typeof roomCode !== 'string' || roomCode.length > 20)
+            return;
         socket.leave(roomCode);
-        console.log(`👤 ${socket.id} left room ${roomCode}`);
+        logger_1.logger.debug(`${socket.id} left room ${roomCode}`);
     });
     socket.on('recording-started', (roomCode) => {
+        if (typeof roomCode !== 'string' || roomCode.length > 20)
+            return;
         socket.to(roomCode).emit('recording-started');
     });
     socket.on('recording-stopped', (roomCode) => {
+        if (typeof roomCode !== 'string' || roomCode.length > 20)
+            return;
         socket.to(roomCode).emit('recording-stopped');
     });
     socket.on('disconnect', () => {
-        logger_1.logger.info(`🔌 Socket disconnected: ${socket.id}`);
+        logger_1.logger.debug(`Socket disconnected: ${socket.id}`);
     });
 });
-// Global Error Handler
 app.use((err, req, res, next) => {
     logger_1.logger.error(err.message, { stack: err.stack, url: req.url, method: req.method });
-    res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
+    res.status(err.status || 500).json({ error: config_1.config.isProduction ? 'Internal Server Error' : err.message });
 });
-// Start server
-const db_1 = require("./models/db");
 const start = async () => {
     await (0, db_1.initializeDatabase)();
     server.listen(config_1.config.port, () => {
         logger_1.logger.info(`Server started on port ${config_1.config.port}`);
-        console.log('');
-        console.log('🎵 ═══════════════════════════════════════════════════');
-        console.log('   Sangeet Arghya — Nada Upasana Academy');
-        console.log('   Meeting Server');
-        console.log('═══════════════════════════════════════════════════════');
-        console.log(`   🚀 Server running on http://localhost:${config_1.config.port}`);
-        console.log(`   📡 API endpoint: http://localhost:${config_1.config.port}/api`);
-        console.log(`   🔑 LiveKit: ${config_1.config.livekit.apiKey ? '✅ Configured' : '⚠️  Not configured (demo mode)'}`);
-        console.log('═══════════════════════════════════════════════════════');
-        console.log('');
+        if (!config_1.config.isProduction) {
+            console.log('');
+            console.log('🎵 ═══════════════════════════════════════════════════');
+            console.log('   Sangeet Arghya — Nada Upasana Academy');
+            console.log('   Meeting Server');
+            console.log('═══════════════════════════════════════════════════════');
+            console.log(`   🚀 Server running on http://localhost:${config_1.config.port}`);
+            console.log(`   📡 API endpoint: http://localhost:${config_1.config.port}/api`);
+            console.log(`   🔑 LiveKit: ${config_1.config.livekit.apiKey ? '✅ Configured' : '⚠️  Not configured (demo mode)'}`);
+            console.log('═══════════════════════════════════════════════════════');
+            console.log('');
+        }
     });
 };
 start();
-// Graceful Shutdown
 const shutdown = () => {
     logger_1.logger.info('SIGTERM/SIGINT received. Shutting down gracefully...');
+    io.close();
     server.close(() => {
         logger_1.logger.info('HTTP server closed.');
-        // Import db lazily so it shuts down properly
         Promise.resolve().then(() => __importStar(require('./models/db'))).then(({ default: db }) => {
             db.close();
             logger_1.logger.info('Database connection closed.');
@@ -144,6 +152,7 @@ const shutdown = () => {
             process.exit(1);
         });
     });
+    setTimeout(() => process.exit(1), 10000);
 };
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

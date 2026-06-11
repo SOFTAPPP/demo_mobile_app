@@ -94,7 +94,10 @@ const initializeDatabase = async () => {
         `CREATE INDEX IF NOT EXISTS idx_meetings_host ON meetings(host_id);`,
         `CREATE INDEX IF NOT EXISTS idx_meetings_room_code ON meetings(room_code);`,
         `CREATE INDEX IF NOT EXISTS idx_meetings_scheduled ON meetings(scheduled_for);`,
-        `CREATE INDEX IF NOT EXISTS idx_meeting_participants_user ON meeting_participants(user_id);`
+        `CREATE INDEX IF NOT EXISTS idx_meetings_active ON meetings(is_active, is_deleted);`,
+        `CREATE INDEX IF NOT EXISTS idx_meeting_participants_user ON meeting_participants(user_id);`,
+        `CREATE INDEX IF NOT EXISTS idx_recordings_meeting ON recordings(meeting_id);`,
+        `CREATE INDEX IF NOT EXISTS idx_recordings_egress ON recordings(egress_id);`,
     ];
     for (const q of indices) {
         await db.execute(q);

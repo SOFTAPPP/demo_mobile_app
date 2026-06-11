@@ -1,12 +1,29 @@
 import { AccessToken, EgressClient, EncodedFileOutput, S3Upload, EncodedFileType } from 'livekit-server-sdk';
+import { RoomServiceClient } from 'livekit-server-sdk';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
+import { logger } from '../lib/logger';
+
+let roomServiceClient: RoomServiceClient | null = null;
+let egressClient: EgressClient | null = null;
+
+function getRoomServiceClient(): RoomServiceClient {
+  if (!roomServiceClient) {
+    const httpUrl = config.livekit.url.replace('wss://', 'https://').replace('ws://', 'http://');
+    roomServiceClient = new RoomServiceClient(httpUrl, config.livekit.apiKey, config.livekit.apiSecret);
+  }
+  return roomServiceClient;
+}
+
+function getEgressClient(): EgressClient {
+  if (!egressClient) {
+    const httpUrl = config.livekit.url.replace('wss://', 'https://').replace('ws://', 'http://');
+    egressClient = new EgressClient(httpUrl, config.livekit.apiKey, config.livekit.apiSecret);
+  }
+  return egressClient;
+}
 
 export const livekitService = {
-  /**
-   * Generate a LiveKit access token for a participant to join a room.
-   * This token is what the client uses to connect to the LiveKit SFU.
-   */
   async generateToken(
     roomName: string,
     participantName: string,
@@ -14,19 +31,14 @@ export const livekitService = {
     isTeacher: boolean = false
   ): Promise<string> {
     if (!this.isConfigured()) {
-      // Demo mode — return a placeholder token
-      // In production, LiveKit credentials are required
-      console.warn('⚠️  LiveKit credentials not configured. Running in demo mode.');
       return 'demo-token-' + participantId;
     }
 
-    // Append a unique UUID to prevent identity collisions if a user joins from multiple tabs
     const uniqueIdentity = `${participantId}-${uuidv4().substring(0, 8)}`;
 
     const token = new AccessToken(config.livekit.apiKey, config.livekit.apiSecret, {
       identity: uniqueIdentity,
       name: participantName,
-      // Token expires in 6 hours (one class session)
       ttl: '6h',
       metadata: JSON.stringify({
         role: isTeacher ? 'teacher' : 'student',
@@ -34,21 +46,17 @@ export const livekitService = {
       }),
     });
 
-    // Grant room-level permissions
     token.addGrant({
       room: roomName,
       roomJoin: true,
       canPublish: true,
       canSubscribe: true,
-      canPublishData: isTeacher, // Only teacher can broadcast data messages
+      canPublishData: isTeacher,
     });
 
     return await token.toJwt();
   },
 
-  /**
-   * Get the LiveKit WebSocket URL for the client to connect to
-   */
   getServerUrl(): string {
     return config.livekit.url;
   },
@@ -62,29 +70,18 @@ export const livekitService = {
     );
   },
 
-  /**
-   * Forcefully ends a LiveKit room, kicking out all participants
-   */
   async endRoom(roomName: string): Promise<void> {
     if (!this.isConfigured()) return;
-    
-    const { apiKey, apiSecret, url } = config.livekit;
-    // RoomServiceClient requires http/https URL, not ws/wss
-    const httpUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
-    
+
     try {
-      const { RoomServiceClient } = await import('livekit-server-sdk');
-      const roomService = new RoomServiceClient(httpUrl, apiKey, apiSecret);
-      await roomService.deleteRoom(roomName);
-      console.log(`🧹 Cleaned up LiveKit room: ${roomName}`);
+      const client = getRoomServiceClient();
+      await client.deleteRoom(roomName);
+      logger.info(`Cleaned up LiveKit room: ${roomName}`);
     } catch (error) {
-      console.error(`Failed to delete LiveKit room ${roomName}:`, error);
+      logger.error(`Failed to delete LiveKit room ${roomName}`, { error });
     }
   },
 
-  /**
-   * Start recording a room via WebEgress
-   */
   async startRecording(roomName: string, publicUrl: string): Promise<{ egressId: string, fileUrl: string }> {
     if (!this.isConfigured()) {
       throw new Error('LiveKit is not configured');
@@ -94,10 +91,7 @@ export const livekitService = {
       throw new Error('Cloudflare R2 credentials are not fully configured in .env');
     }
 
-    const { apiKey, apiSecret, url } = config.livekit;
-    const httpUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
-    const egressClient = new EgressClient(httpUrl, apiKey, apiSecret);
-
+    const client = getEgressClient();
     const timestamp = Date.now();
     const fileName = `recordings/${roomName}-${timestamp}.mp4`;
 
@@ -114,18 +108,13 @@ export const livekitService = {
       output: { case: 's3', value: s3Upload },
     });
 
-    // Generate a secure LiveKit token specifically for the bot to join the room
     const botLiveKitToken = await this.generateToken(roomName, "Class Recorder", "bot-recorder", false);
-    
-    // The LiveKit server URL that the frontend needs to connect to
     const lkUrl = this.getServerUrl();
 
-    // Construct the WebEgress URL with the secure bot token
     const egressUrl = `${publicUrl}/meeting/${roomName}?botToken=${botLiveKitToken}&lkUrl=${encodeURIComponent(lkUrl)}`;
-    console.log('[Egress] Attempting to start WebEgress for URL:', egressUrl);
+    logger.info(`Starting WebEgress for room: ${roomName}`);
 
-    // Start WebEgress instead of RoomCompositeEgress
-    const info = await egressClient.startWebEgress(egressUrl, {
+    const info = await client.startWebEgress(egressUrl, {
       file: fileOutput,
     });
 
@@ -135,41 +124,25 @@ export const livekitService = {
     return { egressId: info.egressId as string, fileUrl };
   },
 
-  /**
-   * Stop a recording
-   */
   async stopRecording(egressId: string): Promise<void> {
     if (!this.isConfigured()) return;
-    
-    const { apiKey, apiSecret, url } = config.livekit;
-    const httpUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
-    const egressClient = new EgressClient(httpUrl, apiKey, apiSecret);
-
-    await egressClient.stopEgress(egressId);
+    const client = getEgressClient();
+    await client.stopEgress(egressId);
   },
 
-  /**
-   * Get the current status of an egress
-   */
   async getEgressStatus(egressId: string): Promise<string> {
     if (!this.isConfigured()) return 'completed';
-    
-    const { apiKey, apiSecret, url } = config.livekit;
-    const httpUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
-    const egressClient = new EgressClient(httpUrl, apiKey, apiSecret);
+
+    const client = getEgressClient();
 
     try {
-      // We pass the egressId in a list EgressListRequest object
-      const egresses = await egressClient.listEgress({ egressId });
+      const egresses = await client.listEgress({ egressId });
       if (egresses && egresses.length > 0) {
-        // Status 3 is EGRESS_COMPLETE, 4 is EGRESS_FAILED, 5 is EGRESS_ABORTED
-        // We will just convert it to string for checking
         return egresses[0].status.toString();
       }
-      return 'completed'; // If it doesn't exist, assume completed/failed and don't block UI
-    } catch (e) {
-      console.error('Failed to get egress status:', e);
-      return 'completed'; 
+      return 'completed';
+    } catch {
+      return 'completed';
     }
   }
 };

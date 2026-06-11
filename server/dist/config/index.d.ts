@@ -10,5 +10,6 @@ export declare const config: {
         url: string;
     };
     corsOrigins: string[];
+    isProduction: boolean;
 };
 //# sourceMappingURL=index.d.ts.map

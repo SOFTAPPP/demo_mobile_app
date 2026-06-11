@@ -35,44 +35,54 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const uuid_1 = require("uuid");
+const zod_1 = require("zod");
 const db_1 = __importStar(require("../models/db"));
 const livekit_service_1 = require("../services/livekit.service");
 const auth_middleware_1 = require("../middleware/auth.middleware");
+const logger_1 = require("../lib/logger");
 const router = (0, express_1.Router)();
-// All meeting routes require authentication
 router.use(auth_middleware_1.authMiddleware);
-/**
- * Generate a 6-character room code
- */
 function generateRoomCode() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No I,O,0,1 to avoid confusion
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
     for (let i = 0; i < 6; i++) {
         code += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return code;
 }
-/**
- * POST /api/meetings/create
- * Teacher creates a new meeting room
- */
+const createSchema = zod_1.z.object({
+    title: zod_1.z.string().max(100).optional(),
+});
+const joinSchema = zod_1.z.object({
+    roomCode: zod_1.z.string().min(1).max(10),
+    displayName: zod_1.z.string().max(50).optional(),
+});
+const scheduleSchema = zod_1.z.object({
+    title: zod_1.z.string().max(100).optional(),
+    scheduledFor: zod_1.z.string().min(1),
+});
+const endSchema = zod_1.z.object({
+    roomCode: zod_1.z.string().min(1).max(10),
+});
 router.post('/create', async (req, res) => {
     try {
-        const { title } = req.body;
-        const meetingTitle = title || 'Music Class';
+        const parsed = createSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({ error: parsed.error.issues[0].message });
+            return;
+        }
+        const meetingTitle = parsed.data.title || 'Music Class';
         const meetingId = (0, uuid_1.v4)();
         let roomCode = generateRoomCode();
-        // Ensure unique room code
+        let attempts = 0;
         let existing = await db_1.meetingQueries.findByCode(roomCode);
-        while (existing) {
+        while (existing && attempts < 5) {
             roomCode = generateRoomCode();
             existing = await db_1.meetingQueries.findByCode(roomCode);
+            attempts++;
         }
         await db_1.meetingQueries.create(meetingId, roomCode, meetingTitle, req.user.userId, 100);
-        // Generate LiveKit token for the host (teacher)
-        const token = await livekit_service_1.livekitService.generateToken(roomCode, 'Teacher', // Will be replaced with actual name
-        req.user.userId, true // isTeacher
-        );
+        const token = await livekit_service_1.livekitService.generateToken(roomCode, 'Teacher', req.user.userId, true);
         res.status(201).json({
             meeting: {
                 id: meetingId,
@@ -88,31 +98,28 @@ router.post('/create', async (req, res) => {
         });
     }
     catch (error) {
-        console.error('Create meeting error:', error);
+        logger_1.logger.error('Create meeting error', { error });
         res.status(500).json({ error: 'Failed to create meeting' });
     }
 });
-/**
- * POST /api/meetings/schedule
- * Teacher schedules a new meeting room for a future date
- */
 router.post('/schedule', async (req, res) => {
     try {
-        const { title, scheduledFor } = req.body;
-        const meetingTitle = title || 'Scheduled Music Class';
-        if (!scheduledFor) {
-            res.status(400).json({ error: 'scheduledFor date is required' });
+        const parsed = scheduleSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({ error: parsed.error.issues[0].message });
             return;
         }
+        const { scheduledFor } = parsed.data;
+        const meetingTitle = parsed.data.title || 'Scheduled Music Class';
         const meetingId = (0, uuid_1.v4)();
         let roomCode = generateRoomCode();
-        // Ensure unique room code
+        let attempts = 0;
         let existing = await db_1.meetingQueries.findByCode(roomCode);
-        while (existing) {
+        while (existing && attempts < 5) {
             roomCode = generateRoomCode();
             existing = await db_1.meetingQueries.findByCode(roomCode);
+            attempts++;
         }
-        // Insert scheduled meeting into the database
         await db_1.meetingQueries.schedule(meetingId, roomCode, meetingTitle, req.user.userId, 100, scheduledFor);
         res.status(201).json({
             meeting: {
@@ -125,21 +132,18 @@ router.post('/schedule', async (req, res) => {
         });
     }
     catch (error) {
-        console.error('Schedule meeting error:', error);
+        logger_1.logger.error('Schedule meeting error', { error });
         res.status(500).json({ error: 'Failed to schedule meeting' });
     }
 });
-/**
- * POST /api/meetings/join
- * Student joins an existing meeting
- */
 router.post('/join', async (req, res) => {
     try {
-        const { roomCode, displayName } = req.body;
-        if (!roomCode) {
-            res.status(400).json({ error: 'Room code is required' });
+        const parsed = joinSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({ error: parsed.error.issues[0].message });
             return;
         }
+        const { roomCode, displayName } = parsed.data;
         const meeting = await db_1.meetingQueries.findByCode(roomCode.toUpperCase());
         if (!meeting) {
             res.status(404).json({ error: 'Meeting not found. Check the room code.' });
@@ -151,9 +155,7 @@ router.post('/join', async (req, res) => {
         }
         const isTeacher = meeting.host_id === req.user.userId;
         const participantName = displayName || (isTeacher ? 'Teacher' : 'Student');
-        // Generate LiveKit token for the participant
         const token = await livekit_service_1.livekitService.generateToken(meeting.room_code, participantName, req.user.userId, isTeacher);
-        // Record user as participant in this meeting
         try {
             await db_1.default.execute({
                 sql: `INSERT OR IGNORE INTO meeting_participants (meeting_id, user_id) VALUES (?, ?)`,
@@ -161,7 +163,7 @@ router.post('/join', async (req, res) => {
             });
         }
         catch (dbError) {
-            console.error('Failed to record meeting participant:', dbError);
+            logger_1.logger.error('Failed to record meeting participant', { error: dbError });
         }
         res.json({
             meeting: {
@@ -179,22 +181,18 @@ router.post('/join', async (req, res) => {
         });
     }
     catch (error) {
-        console.error('Join meeting error:', error);
+        logger_1.logger.error('Join meeting error', { error });
         res.status(500).json({ error: 'Failed to join meeting' });
     }
 });
-/**
- * POST /api/meetings/end
- * Teacher ends a meeting
- */
 router.post('/end', async (req, res) => {
     try {
-        const { roomCode } = req.body;
-        if (!roomCode) {
-            res.status(400).json({ error: 'Room code is required' });
+        const parsed = endSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({ error: parsed.error.issues[0].message });
             return;
         }
-        const cleanRoomCode = roomCode.toUpperCase();
+        const cleanRoomCode = parsed.data.roomCode.toUpperCase();
         const meeting = await db_1.meetingQueries.findByCode(cleanRoomCode);
         if (!meeting) {
             res.status(404).json({ error: 'Meeting not found' });
@@ -205,79 +203,59 @@ router.post('/end', async (req, res) => {
             return;
         }
         await db_1.meetingQueries.endMeeting(cleanRoomCode);
-        // Broadcast instantly to all participants via Socket.io for 0-latency teardown
         const { io } = await Promise.resolve().then(() => __importStar(require('../index')));
         io.to(cleanRoomCode).emit('meeting-ended');
         io.emit('meeting-ended-global', cleanRoomCode);
-        // Find if there is an active recording
         const recordings = await db_1.recordingQueries.getByMeetingId(meeting.id);
         const activeRecording = recordings.find(r => r.status === 'recording');
         if (activeRecording) {
             try {
                 await livekit_service_1.livekitService.stopRecording(activeRecording.egress_id);
                 await db_1.recordingQueries.updateStatus('completed', activeRecording.egress_id);
-                // Wait 2 seconds for LiveKit to gracefully finalize the MP4 upload before nuking the room
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
             catch (err) {
-                console.error('Failed to gracefully stop recording before ending room:', err);
+                logger_1.logger.error('Failed to gracefully stop recording before ending room', { error: err });
             }
         }
-        // Asynchronously tell LiveKit to kick everyone out and delete the room
         livekit_service_1.livekitService.endRoom(cleanRoomCode);
         res.json({ message: 'Meeting ended successfully' });
     }
     catch (error) {
-        console.error('End meeting error:', error);
+        logger_1.logger.error('End meeting error', { error });
         res.status(500).json({ error: 'Failed to end meeting' });
     }
 });
-/**
- * GET /api/meetings/recent
- * Get recent meetings for the current user
- */
 router.get('/recent', async (req, res) => {
     try {
         const meetings = await db_1.meetingQueries.getRecent(req.user.userId, req.user.userId);
         res.json({ meetings });
     }
     catch (error) {
-        console.error('Get recent meetings error:', error);
+        logger_1.logger.error('Get recent meetings error', { error });
         res.status(500).json({ error: 'Failed to get meetings' });
     }
 });
-/**
- * GET /api/meetings/scheduled
- * Get scheduled meetings for the current user
- */
 router.get('/scheduled', async (req, res) => {
     try {
         const meetings = await db_1.meetingQueries.getScheduled(req.user.userId);
         res.json({ meetings });
     }
     catch (error) {
-        console.error('Get scheduled meetings error:', error);
+        logger_1.logger.error('Get scheduled meetings error', { error });
         res.status(500).json({ error: 'Failed to get scheduled meetings' });
     }
 });
-/**
- * GET /api/meetings/active
- * Get all active meetings
- */
 router.get('/active', async (req, res) => {
     try {
         const meetings = await db_1.meetingQueries.getActive();
         res.json({ meetings });
     }
     catch (error) {
-        console.error('Get active meetings error:', error);
+        logger_1.logger.error('Get active meetings error', { error });
         res.status(500).json({ error: 'Failed to get active meetings' });
     }
 });
-/**
- * DELETE /api/meetings/:id
- * Teacher deletes a meeting
- */
 router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -287,13 +265,10 @@ router.delete('/:id', async (req, res) => {
             return;
         }
         if (meeting.host_id === req.user.userId) {
-            // Host: Soft delete the meeting so it disappears from the Dashboard list
-            // We purposefully DO NOT delete meeting_participants so students can still view the cloud recording!
             await db_1.meetingQueries.deleteMeeting(id, req.user.userId);
             res.json({ message: 'Meeting removed from dashboard successfully' });
         }
         else {
-            // Participant: just remove this meeting from their own history
             const result = await db_1.default.execute({
                 sql: 'DELETE FROM meeting_participants WHERE meeting_id = ? AND user_id = ?',
                 args: [id, req.user.userId]
@@ -306,14 +281,10 @@ router.delete('/:id', async (req, res) => {
         }
     }
     catch (error) {
-        console.error('Delete meeting error:', error);
+        logger_1.logger.error('Delete meeting error', { error });
         res.status(500).json({ error: 'Failed to delete meeting' });
     }
 });
-/**
- * POST /api/meetings/record/start
- * Host starts recording the meeting
- */
 router.post('/record/start', async (req, res) => {
     try {
         const { roomCode, publicUrl } = req.body;
@@ -326,21 +297,20 @@ router.post('/record/start', async (req, res) => {
             res.status(404).json({ error: 'Meeting not found' });
             return;
         }
+        if (meeting.host_id !== req.user.userId) {
+            res.status(403).json({ error: 'Only the host can start recording' });
+            return;
+        }
         const { egressId, fileUrl } = await livekit_service_1.livekitService.startRecording(roomCode, publicUrl);
-        // Save recording to DB
         const recordingId = (0, uuid_1.v4)();
         await db_1.recordingQueries.create(recordingId, meeting.id, req.user.userId, egressId, 'recording', fileUrl);
         res.json({ message: 'Recording started', egressId, fileUrl });
     }
     catch (error) {
-        console.error('Start recording error:', error);
+        logger_1.logger.error('Start recording error', { error });
         res.status(500).json({ error: error.message || 'Failed to start recording' });
     }
 });
-/**
- * POST /api/meetings/record/stop
- * Host stops recording the meeting
- */
 router.post('/record/stop', async (req, res) => {
     try {
         const { egressId, roomCode } = req.body;
@@ -358,25 +328,20 @@ router.post('/record/stop', async (req, res) => {
         }
         catch (err) {
             if (err.message && err.message.includes('EGRESS_COMPLETE')) {
-                console.log(`[Recording] Egress ${egressId} was already completed when trying to stop. Marking as complete.`);
+                logger_1.logger.info(`Egress ${egressId} was already completed when trying to stop. Marking as complete.`);
             }
             else {
                 throw err;
             }
         }
-        // Update DB status
         await db_1.recordingQueries.updateStatus('completed', egressId);
         res.json({ message: 'Recording stopped' });
     }
     catch (error) {
-        console.error('Stop recording error:', error);
+        logger_1.logger.error('Stop recording error', { error });
         res.status(500).json({ error: error.message || 'Failed to stop recording' });
     }
 });
-/**
- * DELETE /api/meetings/recordings/:id
- * Teacher deletes a recording
- */
 router.delete('/recordings/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -394,14 +359,31 @@ router.delete('/recordings/:id', async (req, res) => {
         res.json({ message: 'Recording deleted successfully' });
     }
     catch (error) {
-        console.error('Delete recording error:', error);
+        logger_1.logger.error('Delete recording error', { error });
         res.status(500).json({ error: 'Failed to delete recording' });
     }
 });
-/**
- * GET /api/meetings/recordings/all
- * Fetch all recordings for a user
- */
+async function syncStaleRecordings(recordings) {
+    const stale = recordings.filter(r => r.status === 'recording');
+    if (stale.length === 0)
+        return;
+    await Promise.all(stale.map(async (r) => {
+        try {
+            const status = await livekit_service_1.livekitService.getEgressStatus(r.egress_id);
+            if (status === 'EGRESS_COMPLETE' || status === '3' || status === 'completed') {
+                await db_1.recordingQueries.updateStatus('completed', r.egress_id);
+                r.status = 'completed';
+            }
+            else if (status === 'EGRESS_FAILED' || status === '4' || status === 'EGRESS_ABORTED' || status === '5' || status === 'failed') {
+                await db_1.recordingQueries.updateStatus('failed', r.egress_id);
+                r.status = 'failed';
+            }
+        }
+        catch {
+            // Non-critical, skip
+        }
+    }));
+}
 router.get('/recordings/all', async (req, res) => {
     try {
         const userId = req.user?.userId;
@@ -410,57 +392,25 @@ router.get('/recordings/all', async (req, res) => {
             return;
         }
         const recordings = await db_1.recordingQueries.getAllForUser(userId);
-        // Sync stale recordings
-        for (const r of recordings) {
-            if (r.status === 'recording') {
-                const status = await livekit_service_1.livekitService.getEgressStatus(r.egress_id);
-                if (status === 'EGRESS_COMPLETE' || status === '3' || status === 'completed') {
-                    await db_1.recordingQueries.updateStatus('completed', r.egress_id);
-                    r.status = 'completed';
-                }
-                else if (status === 'EGRESS_FAILED' || status === '4' || status === 'EGRESS_ABORTED' || status === '5' || status === 'failed') {
-                    await db_1.recordingQueries.updateStatus('failed', r.egress_id);
-                    r.status = 'failed';
-                }
-            }
-        }
+        await syncStaleRecordings(recordings);
         res.json({ recordings });
     }
     catch (error) {
-        console.error('Get all recordings error:', error);
+        logger_1.logger.error('Get all recordings error', { error });
         res.status(500).json({ error: 'Failed to fetch recordings' });
     }
 });
-/**
- * GET /api/meetings/:id/recordings
- * Fetch recordings for a specific meeting
- */
 router.get('/:id/recordings', async (req, res) => {
     try {
         const { id } = req.params;
-        const userId = req.user?.userId;
         const allRecordings = await db_1.recordingQueries.getByMeetingId(id);
         const meeting = await db_1.meetingQueries.findById(id);
-        // Return all recordings for this meeting
         const recordings = allRecordings.map(r => ({ ...r, host_id: meeting?.host_id, meeting_title: meeting?.title }));
-        // Sync stale recordingss
-        for (const r of recordings) {
-            if (r.status === 'recording') {
-                const status = await livekit_service_1.livekitService.getEgressStatus(r.egress_id);
-                if (status === 'EGRESS_COMPLETE' || status === '3' || status === 'completed') {
-                    await db_1.recordingQueries.updateStatus('completed', r.egress_id);
-                    r.status = 'completed';
-                }
-                else if (status === 'EGRESS_FAILED' || status === '4' || status === 'EGRESS_ABORTED' || status === '5' || status === 'failed') {
-                    await db_1.recordingQueries.updateStatus('failed', r.egress_id);
-                    r.status = 'failed';
-                }
-            }
-        }
+        await syncStaleRecordings(recordings);
         res.json({ recordings });
     }
     catch (error) {
-        console.error('Get recordings error:', error);
+        logger_1.logger.error('Get recordings error', { error });
         res.status(500).json({ error: 'Failed to fetch recordings' });
     }
 });

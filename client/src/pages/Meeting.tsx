@@ -10,15 +10,14 @@ import {
 } from '@livekit/components-react';
 import { LocalAudioTrack, RoomEvent, Track } from 'livekit-client';
 import { Disc, LogOut, Mic, MicOff, Palette, PhoneOff, Square, Users, Video as VideoIcon, VideoOff } from 'lucide-react';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { io as socketIO } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { clearSharedRoom, getSharedRoom, roomOptions } from '../services/livekitPrewarm';
+import { getSocket, disconnectSocket } from '../services/socket';
 import '../styles/meeting.css';
 
-// Unified, professional sound system
 const playSound = (type: 'record-start' | 'record-stop' | 'user-join' | 'user-leave') => {
   try {
     const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -26,67 +25,51 @@ const playSound = (type: 'record-start' | 'record-stop' | 'user-join' | 'user-le
 
     const osc = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
-    
+
     osc.connect(gainNode);
     gainNode.connect(audioCtx.destination);
-    
-    // Professional, smooth sine wave
-    osc.type = 'sine';
 
+    osc.type = 'sine';
     const now = audioCtx.currentTime;
 
     if (type === 'record-start') {
-      // Authoritative double high-blip (like iOS screen record)
       osc.frequency.setValueAtTime(880, now);
       osc.frequency.setValueAtTime(1046.50, now + 0.1);
-      
       gainNode.gain.setValueAtTime(0, now);
       gainNode.gain.linearRampToValueAtTime(0.2, now + 0.02);
       gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
       gainNode.gain.linearRampToValueAtTime(0.2, now + 0.12);
       gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
-      
       osc.start(now);
       osc.stop(now + 0.3);
     } else if (type === 'record-stop') {
-      // Authoritative low-blip
       osc.frequency.setValueAtTime(440, now);
-      
       gainNode.gain.setValueAtTime(0, now);
       gainNode.gain.linearRampToValueAtTime(0.2, now + 0.02);
       gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
-      
       osc.start(now);
       osc.stop(now + 0.25);
     } else if (type === 'user-join') {
-      // Elegant soft rising tone
-      osc.frequency.setValueAtTime(523.25, now); // C5
-      osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.1); // E5
-      
+      osc.frequency.setValueAtTime(523.25, now);
+      osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.1);
       gainNode.gain.setValueAtTime(0, now);
       gainNode.gain.linearRampToValueAtTime(0.1, now + 0.05);
       gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-      
       osc.start(now);
       osc.stop(now + 0.45);
     } else if (type === 'user-leave') {
-      // Elegant soft falling tone
-      osc.frequency.setValueAtTime(659.25, now); // E5
-      osc.frequency.exponentialRampToValueAtTime(523.25, now + 0.1); // C5
-      
+      osc.frequency.setValueAtTime(659.25, now);
+      osc.frequency.exponentialRampToValueAtTime(523.25, now + 0.1);
       gainNode.gain.setValueAtTime(0, now);
       gainNode.gain.linearRampToValueAtTime(0.08, now + 0.05);
       gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-      
       osc.start(now);
       osc.stop(now + 0.45);
     }
-  } catch (e) {
-    console.log("Audio not supported or blocked", e);
-  }
+  } catch {}
 };
 
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
+class MeetingErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
   constructor(props: any) {
     super(props);
     this.state = { hasError: false, error: null };
@@ -97,14 +80,14 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   }
 
   componentDidCatch(error: any, errorInfo: any) {
-    console.error("ErrorBoundary caught an error", error, errorInfo);
+    console.error("MeetingErrorBoundary caught an error", error, errorInfo);
   }
 
   render() {
     if (this.state.hasError) {
       return (
         <div style={{ padding: '20px', background: '#2D1B22', color: '#FF8888', fontFamily: 'monospace', minHeight: '100vh' }}>
-          <h2>🚨 React Application Crashed</h2>
+          <h2>Application Crashed</h2>
           <pre style={{ background: '#1A0D12', padding: '15px', borderRadius: '8px', overflow: 'auto' }}>
             {this.state.error?.stack || String(this.state.error)}
           </pre>
@@ -144,24 +127,20 @@ export default function Meeting() {
   const [recordingToast, setRecordingToast] = useState<{ show: boolean, type: 'start' | 'stop' | null }>({ show: false, type: null });
   const prewarmedRoom = useRef(getSharedRoom());
 
-  // Socket.io for instant teardown
   useEffect(() => {
     if (!roomCode) return;
 
-    // Connect to the backend root (which proxies via Vite or connects directly)
-    const socketUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : '/';
-    const socket = socketIO(socketUrl);
+    const socket = getSocket();
 
     socket.emit('join-room', roomCode);
 
-    socket.on('meeting-ended', () => {
-      console.log('Meeting ended by host');
+    const onMeetingEnded = () => {
       if (isLeavingManually.current) return;
       clearSharedRoom();
       navigate('/meeting-ended', { state: { roomCode } });
-    });
+    };
 
-    socket.on('recording-started', () => {
+    const onRecordingStarted = () => {
       setIsRecording((prev) => {
         if (!prev) {
           setRecordingToast({ show: true, type: 'start' });
@@ -170,9 +149,9 @@ export default function Meeting() {
         }
         return prev;
       });
-    });
+    };
 
-    socket.on('recording-stopped', () => {
+    const onRecordingStopped = () => {
       setIsRecording((prev) => {
         if (prev) {
           setRecordingToast({ show: true, type: 'stop' });
@@ -182,10 +161,17 @@ export default function Meeting() {
         }
         return prev;
       });
-    });
+    };
+
+    socket.on('meeting-ended', onMeetingEnded);
+    socket.on('recording-started', onRecordingStarted);
+    socket.on('recording-stopped', onRecordingStopped);
 
     return () => {
-      socket.disconnect();
+      socket.off('meeting-ended', onMeetingEnded);
+      socket.off('recording-started', onRecordingStarted);
+      socket.off('recording-stopped', onRecordingStopped);
+      socket.emit('leave-room', roomCode);
     };
   }, [roomCode, navigate]);
 
@@ -224,6 +210,46 @@ export default function Meeting() {
     }
   };
 
+  const handleLeave = useCallback(async () => {
+    if (isHost && isRecording && egressId) {
+      try {
+        await api.post('/meetings/record/stop', { egressId, roomCode });
+      } catch {}
+    }
+    isLeavingManually.current = true;
+    clearSharedRoom();
+    disconnectSocket();
+    navigate('/dashboard');
+  }, [isHost, isRecording, egressId, roomCode, navigate]);
+
+  const handleEnd = useCallback(() => {
+    if (isHost) {
+      isLeavingManually.current = true;
+      clearSharedRoom();
+      disconnectSocket();
+      navigate('/meeting-ended', { state: { roomCode } });
+      api.post('/meetings/end', { roomCode }).catch(() => {});
+    }
+  }, [isHost, roomCode, navigate]);
+
+  const handleOptimisticStart = useCallback((newEgressId: string) => {
+    setEgressId(newEgressId);
+    setIsRecording(true);
+    if (newEgressId !== 'temp_id_loading') {
+      playSound('record-start');
+      setRecordingToast({ show: true, type: 'start' });
+      setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
+    }
+  }, []);
+
+  const handleOptimisticStop = useCallback(() => {
+    setEgressId(null);
+    setIsRecording(false);
+    playSound('record-stop');
+    setRecordingToast({ show: true, type: 'stop' });
+    setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
+  }, []);
+
   if (isConnecting) {
     return (
       <div className="meeting-page">
@@ -255,7 +281,7 @@ export default function Meeting() {
   }
 
   return (
-    <ErrorBoundary>
+    <MeetingErrorBoundary>
       <div className={`meeting-page ${theme === 'maroon' ? 'theme-maroon' : ''}`}>
         <LiveKitRoom
           room={prewarmedRoom.current || undefined}
@@ -267,15 +293,8 @@ export default function Meeting() {
           onConnected={() => {
             hasConnected.current = true;
           }}
-          onDisconnected={() => {
-            console.log('Disconnected from room');
-            // We removed the fallback to /meeting-ended here because it was aggressively kicking
-            // users out during minor network blips or browser hot-reloads.
-            // Teardown navigation is now handled 100% reliably by Socket.io.
-          }}
+          onDisconnected={() => {}}
           onError={(err) => {
-            console.error('LiveKit Error:', err);
-            // Only show hard errors, ignore minor warnings or temporary disconnects
             if (err.message && !err.message.includes('permission') && !err.message.includes('reconnect')) {
               setConnectionError(err.message);
             }
@@ -286,31 +305,8 @@ export default function Meeting() {
             roomCode={roomCode || ''}
             meetingTitle={meetingTitle}
             isHost={isHost}
-            onLeave={async () => {
-              if (isHost && isRecording && egressId) {
-                // Auto-stop recording if host leaves!
-                try {
-                  await api.post('/meetings/record/stop', { egressId, roomCode });
-                } catch(e) {
-                  console.error('Failed to auto-stop recording on leave', e);
-                }
-              }
-              isLeavingManually.current = true;
-              clearSharedRoom();
-              navigate('/dashboard');
-            }}
-            onEnd={() => {
-              if (isHost) {
-                isLeavingManually.current = true;
-                clearSharedRoom();
-                navigate('/meeting-ended', { state: { roomCode } });
-                
-                // Fire and forget, don't await! (Prevents navigating back here after 2 seconds)
-                api.post('/meetings/end', { roomCode }).catch(e => {
-                  console.error('Failed to end meeting', e);
-                });
-              }
-            }}
+            onLeave={handleLeave}
+            onEnd={handleEnd}
             connectionError={connectionError}
             clearConnectionError={() => setConnectionError('')}
             theme={theme}
@@ -318,26 +314,13 @@ export default function Meeting() {
             joinStartTime={location.state?.joinStartTime}
             isRecording={isRecording}
             egressId={egressId}
-            onOptimisticStart={(newEgressId) => {
-              setEgressId(newEgressId);
-              setIsRecording(true);
-              playSound('record-start');
-              setRecordingToast({ show: true, type: 'start' });
-              setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
-            }}
-            onOptimisticStop={() => {
-              setEgressId(null);
-              setIsRecording(false);
-              playSound('record-stop');
-              setRecordingToast({ show: true, type: 'stop' });
-              setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
-            }}
+            onOptimisticStart={handleOptimisticStart}
+            onOptimisticStop={handleOptimisticStop}
           />
           <RoomAudioRenderer />
         </LiveKitRoom>
       </div>
 
-      {/* Recording Toast Overlay */}
       <style>{`
         @keyframes slideDown {
           from { top: -100px; opacity: 0; }
@@ -380,12 +363,11 @@ export default function Meeting() {
           </div>
         </div>
       )}
-    </ErrorBoundary>
+    </MeetingErrorBoundary>
   );
 }
 
-// Custom UI that consumes LiveKit context
-function BrandedMeetingUI({
+const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
   roomCode,
   meetingTitle,
   isHost,
@@ -422,27 +404,23 @@ function BrandedMeetingUI({
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled } = useLocalParticipant();
   const [elapsed, setElapsed] = useState(0);
   const [showParticipants, setShowParticipants] = useState(false);
-  const [musicMode, setMusicMode] = useState(false); // Default to standard mode
+  const [musicMode, setMusicMode] = useState(false);
   const [isRecordLoading, setIsRecordLoading] = useState(false);
 
-  // Listen for participant enter/leave to play the sound
   useEffect(() => {
     if (!room) return;
 
     const onParticipantConnected = (participant: any) => {
-      // Only play sounds for actual humans. Bots typically don't have a name property.
       if (!participant.name || participant.isHidden) return;
       const id = participant?.identity?.toLowerCase() || '';
       if (id.startsWith('eg_') || id.includes('egress') || id.includes('recorder')) return;
-      
       playSound('user-join');
     };
-    
+
     const onParticipantDisconnected = (participant: any) => {
       if (!participant.name || participant.isHidden) return;
       const id = participant?.identity?.toLowerCase() || '';
       if (id.startsWith('eg_') || id.includes('egress') || id.includes('recorder')) return;
-      
       playSound('user-leave');
     };
 
@@ -455,7 +433,6 @@ function BrandedMeetingUI({
     };
   }, [room]);
 
-  // Confirmation Modal State
   const [confirmAction, setConfirmAction] = useState<'leave' | 'end' | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
@@ -473,25 +450,12 @@ function BrandedMeetingUI({
   const displayMic = optimisticMic !== null ? optimisticMic : isMicrophoneEnabled;
   const displayCam = optimisticCam !== null ? optimisticCam : isCameraEnabled;
 
-  // Profiling Logs
-  useEffect(() => {
-    if (joinStartTime) {
-      console.log(`[⏱️ Profiling] 3. Meeting Room UI Rendered in ${(performance.now() - joinStartTime).toFixed(0)}ms`);
-    }
-  }, [joinStartTime]);
-
-  // Auto-clear connection error when connection is restored
   useEffect(() => {
     if ((connectionState === 'connected' || connectionState === 'reconnecting') && connectionError) {
       clearConnectionError();
     }
+  }, [connectionState, connectionError, clearConnectionError]);
 
-    if (connectionState === 'connected' && joinStartTime) {
-      console.log(`[⏱️ Profiling] 4. LiveKit Connection Excellent (Connected) in ${(performance.now() - joinStartTime).toFixed(0)}ms`);
-    }
-  }, [connectionState, connectionError, clearConnectionError, joinStartTime]);
-
-  // Get all camera tracks from all participants
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -502,7 +466,6 @@ function BrandedMeetingUI({
 
   const [recElapsed, setRecElapsed] = useState(0);
 
-  // Timers
   useEffect(() => {
     const elapsedTimer = setInterval(() => setElapsed((prev) => prev + 1), 1000);
     return () => clearInterval(elapsedTimer);
@@ -518,40 +481,37 @@ function BrandedMeetingUI({
     return () => clearInterval(timer);
   }, [isRecording]);
 
-  const formatTime = (seconds: number) => {
+  const formatTime = useCallback((seconds: number) => {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
     if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  };
+  }, []);
 
-  const toggleMic = async () => {
+  const toggleMic = useCallback(async () => {
     const nextState = !displayMic;
     setOptimisticMic(nextState);
     try {
       await localParticipant.setMicrophoneEnabled(nextState);
-    } catch (e) {
-      console.error('Mic toggle failed', e);
+    } catch {
       setOptimisticMic(null);
     }
-  };
+  }, [displayMic, localParticipant]);
 
-  const toggleCam = async () => {
+  const toggleCam = useCallback(async () => {
     const nextState = !displayCam;
     setOptimisticCam(nextState);
     try {
       await localParticipant.setCameraEnabled(nextState);
-    } catch (e) {
-      console.error('Cam toggle failed', e);
+    } catch {
       setOptimisticCam(null);
     }
-  };
+  }, [displayCam, localParticipant]);
 
-  const toggleMusicMode = async () => {
+  const toggleMusicMode = useCallback(async () => {
     const nextMode = !musicMode;
     setMusicMode(nextMode);
-    // Re-publish audio with music mode settings (filters disabled for zero latency)
     if (displayMic) {
       await localParticipant.setMicrophoneEnabled(false);
       await localParticipant.setMicrophoneEnabled(true, {
@@ -560,26 +520,25 @@ function BrandedMeetingUI({
         autoGainControl: !nextMode,
       });
     }
-  };
+  }, [musicMode, displayMic, localParticipant]);
 
-  const displayTracks = tracks.filter(t => !t.participant.identity.includes('bot-recorder') && t.participant.name !== 'Class Recorder');
+  const displayTracks = useMemo(() =>
+    tracks.filter(t => !t.participant.identity.includes('bot-recorder') && t.participant.name !== 'Class Recorder'),
+    [tracks]
+  );
 
-  // Determine grid layout based on number of tracks
   const gridClass = displayTracks.length <= 1 ? 'video-grid--1' :
     displayTracks.length <= 2 ? 'video-grid--2' :
       displayTracks.length <= 4 ? 'video-grid--4' : 'video-grid--many';
 
-  const handleRecordToggle = async () => {
+  const handleRecordToggle = useCallback(async () => {
     try {
       setIsRecordLoading(true);
       if (isRecording && egressId) {
         if (onOptimisticStop) onOptimisticStop();
-        
-        // Broadcast
-        const socketUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : '/';
-        const tempSocket = socketIO(socketUrl);
-        tempSocket.emit('recording-stopped', roomCode);
-        tempSocket.disconnect();
+
+        const socket = getSocket();
+        socket.emit('recording-stopped', roomCode);
 
         await api.post('/meetings/record/stop', { egressId, roomCode });
       } else {
@@ -589,11 +548,10 @@ function BrandedMeetingUI({
 
         if (totalTracks === 0) {
           try {
-            // Generate a 100% silent audio track using Web Audio API (does NOT prompt user for permissions!)
             const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
             const oscillator = ctx.createOscillator();
             const gainNode = ctx.createGain();
-            gainNode.gain.value = 0; // 0 volume = complete silence
+            gainNode.gain.value = 0;
             const dst = ctx.createMediaStreamDestination();
             oscillator.connect(gainNode);
             gainNode.connect(dst);
@@ -601,40 +559,28 @@ function BrandedMeetingUI({
 
             const track = dst.stream.getAudioTracks()[0];
             const dummyTrack = new LocalAudioTrack(track);
-            // Publish as Unknown source so the UI doesn't show a Microphone icon!
             await room.localParticipant.publishTrack(dummyTrack, { name: 'silence', source: Track.Source.Unknown });
 
-            // The Egress server will detect the track and start recording instantly.
-            // We can safely unpublish it after 10 seconds because the Egress will have fully booted up.
             setTimeout(() => {
-              room.localParticipant.unpublishTrack(dummyTrack).catch(console.error);
+              room.localParticipant.unpublishTrack(dummyTrack).catch(() => {});
             }, 10000);
-          } catch (e) {
-            console.log('Failed to create dummy track', e);
-          }
+          } catch {}
         }
 
-        // Optimistic UI for start
         if (onOptimisticStart) onOptimisticStart('temp_id_loading');
 
-        // Broadcast
-        const socketUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : '/';
-        const tempSocket = socketIO(socketUrl);
-        tempSocket.emit('recording-started', roomCode);
-        tempSocket.disconnect();
+        const socket = getSocket();
+        socket.emit('recording-started', roomCode);
 
-        const { data } = await api.post('/meetings/record/start', { 
+        const { data } = await api.post('/meetings/record/start', {
           roomCode,
-          publicUrl: window.location.origin 
+          publicUrl: window.location.origin
         });
-        // Update with real ID once we have it
         if (onOptimisticStart) onOptimisticStart(data.egressId);
       }
     } catch (e: any) {
-      console.error('Failed to toggle recording', e);
       setAlertMessage(e.response?.data?.error || 'Failed to toggle recording.');
 
-      // Revert optimistic UI on failure
       if (isRecording) {
         if (onOptimisticStart && egressId) onOptimisticStart(egressId);
       } else {
@@ -643,11 +589,10 @@ function BrandedMeetingUI({
     } finally {
       setIsRecordLoading(false);
     }
-  };
+  }, [isRecording, egressId, roomCode, room, onOptimisticStart, onOptimisticStop]);
 
   return (
     <div className="meeting-room" style={{ height: '100dvh', width: '100%' }}>
-      {/* Connection Error Banner */}
       {connectionError && (
         <div style={{
           background: '#C53030',
@@ -663,11 +608,10 @@ function BrandedMeetingUI({
           alignItems: 'center',
           gap: '8px'
         }}>
-          <span>⚠️ Connection Error: {connectionError}</span>
+          <span>Connection Error: {connectionError}</span>
         </div>
       )}
 
-      {/* Header */}
       <div className="meeting-room__header">
         <div className="meeting-room__header-left">
           <span className="meeting-room__title">{meetingTitle}</span>
@@ -724,7 +668,6 @@ function BrandedMeetingUI({
         </div>
       </div>
 
-      {/* Video Area */}
       <div className="meeting-room__content">
         {connectionState === 'connecting' || connectionState === 'reconnecting' ? (
           <div className="elite-connecting">
@@ -747,7 +690,6 @@ function BrandedMeetingUI({
           </div>
         )}
 
-        {/* Participants Sidebar */}
         {showParticipants && (
           <div className="participants-sidebar">
             <div className="participants-sidebar__header">
@@ -783,7 +725,6 @@ function BrandedMeetingUI({
         )}
       </div>
 
-      {/* Controls */}
       <div className="meeting-room__controls-wrapper">
         <div className="meeting-room__controls">
           <button
@@ -838,17 +779,14 @@ function BrandedMeetingUI({
           </button>
 
           {isHost && (
-            <>
-              <button className="control-btn control-btn--end" onClick={() => setConfirmAction('end')}>
-                <PhoneOff size={22} />
-                <span className="control-btn__tooltip">End for All</span>
-              </button>
-            </>
+            <button className="control-btn control-btn--end" onClick={() => setConfirmAction('end')}>
+              <PhoneOff size={22} />
+              <span className="control-btn__tooltip">End for All</span>
+            </button>
           )}
         </div>
       </div>
 
-      {/* Custom Confirmation Modal */}
       {confirmAction && (
         <div className="modal-overlay" style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -899,7 +837,6 @@ function BrandedMeetingUI({
         </div>
       )}
 
-      {/* Alert Modal */}
       {alertMessage && (
         <div className="modal-overlay" onClick={() => setAlertMessage(null)} style={{ position: 'fixed', zIndex: 9999, top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ background: 'white', padding: '32px 24px', borderRadius: '16px', maxWidth: '340px', width: '90%', textAlign: 'center', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}>
@@ -918,10 +855,9 @@ function BrandedMeetingUI({
       )}
     </div>
   );
-}
+});
 
-// Single Video Tile for a Participant
-function ParticipantVideoTile({ trackRef }: { trackRef: any }) {
+const ParticipantVideoTile = React.memo(function ParticipantVideoTile({ trackRef }: { trackRef: any }) {
   const p = trackRef.participant;
   const isVideoEnabled = p.isCameraEnabled;
   const isAudioEnabled = p.isMicrophoneEnabled;
@@ -948,4 +884,4 @@ function ParticipantVideoTile({ trackRef }: { trackRef: any }) {
       {!isAudioEnabled && <span className="video-tile__muted"><MicOff size={14} color="white" /></span>}
     </div>
   );
-}
+});

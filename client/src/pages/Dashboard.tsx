@@ -1,12 +1,49 @@
 import { Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { clearSharedRoom, prepareLiveKitRoom } from '../services/livekitPrewarm';
+import { getSocket, disconnectSocket } from '../services/socket';
 import '../styles/dashboard.css';
 import type { Meeting } from '../types';
+
+function LiveClock() {
+  const [time, setTime] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setTime(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <div className="dashboard__live-clock" style={{
+      fontSize: '1.1rem',
+      fontFamily: 'var(--font-heading)',
+      fontWeight: 600,
+      color: 'var(--color-text-primary)',
+      background: 'rgba(255, 255, 255, 0.8)',
+      backdropFilter: 'blur(10px)',
+      WebkitBackdropFilter: 'blur(10px)',
+      padding: '8px 24px',
+      borderRadius: '100px',
+      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.03)',
+      border: '1px solid rgba(255, 255, 255, 0.6)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '12px',
+      letterSpacing: '1px'
+    }}>
+      <span style={{
+        width: '8px',
+        height: '8px',
+        borderRadius: '50%',
+        backgroundColor: '#E53E3E',
+        boxShadow: '0 0 8px rgba(229, 62, 62, 0.5)',
+        animation: 'pulse 2s infinite'
+      }}></span>
+      {new Date(time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -33,41 +70,36 @@ export default function Dashboard() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [currentTime, setCurrentTime] = useState(Date.now());
 
-  // Update current time every second to auto-enable start buttons and power the live clock
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // CRITICAL FIX: Kill any lingering WebRTC connections if the user lands here
-  // (e.g. by pressing the browser's Back button from the Meeting room).
-  // This completely prevents the "ghost participant" bug without being affected by
-  // React 18 Strict Mode double-render bugs!
   useEffect(() => {
     clearSharedRoom();
   }, []);
 
-  // Live Socket.io connection to update Dashboard badges instantly
   useEffect(() => {
-    const socketUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : '/';
-    const socket = io(socketUrl);
+    const socket = getSocket();
 
-    socket.on('meeting-ended-global', (endedRoomCode: string) => {
+    const onMeetingEnded = (endedRoomCode: string) => {
       setRecentMeetings(prev =>
         prev.map(m => m.room_code === endedRoomCode ? { ...m, is_active: 0 } : m)
       );
       setScheduledMeetings(prev =>
         prev.map(m => m.room_code === endedRoomCode ? { ...m, is_active: 0 } : m)
       );
-    });
+    };
+
+    socket.on('meeting-ended-global', onMeetingEnded);
 
     return () => {
-      socket.disconnect();
+      socket.off('meeting-ended-global', onMeetingEnded);
+      disconnectSocket();
     };
   }, []);
 
-  // Fetch recent and scheduled meetings
-  const fetchMeetings = async () => {
+  const fetchMeetings = useCallback(async () => {
     try {
       const [recentRes, scheduledRes] = await Promise.all([
         api.get('/meetings/recent'),
@@ -75,14 +107,12 @@ export default function Dashboard() {
       ]);
       setRecentMeetings(recentRes.data.meetings || []);
       setScheduledMeetings(scheduledRes.data.meetings || []);
-    } catch {
-      // Not critical — ignore
-    }
-  };
+    } catch {}
+  }, []);
 
   useEffect(() => {
     fetchMeetings();
-  }, []);
+  }, [fetchMeetings]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -103,31 +133,22 @@ export default function Dashboard() {
   const handleCreateMeeting = async () => {
     setIsCreating(true);
     setAlertMessage('');
-    const joinStartTime = performance.now();
-    console.log(`[⏱️ Profiling] 1. "Create Meeting" clicked at 0ms`);
 
     try {
-      // PROFILING OPTIMIZATION: Eagerly prefetch the massive WebRTC Meeting component bundle 
-      // *in parallel* with the API request. This completely eliminates the lazy-load delay!
-      const prefetchMeeting = import('./Meeting');
+      import('./Meeting');
 
       const { data } = await api.post('/meetings/create', {
         title: meetingTitle.trim() || 'Music Class',
       });
-      console.log(`[⏱️ Profiling] 2. API /create responded in ${(performance.now() - joinStartTime).toFixed(0)}ms`);
 
-      // PROFILING OPTIMIZATION: Start WebRTC background negotiation BEFORE React even navigates
       prepareLiveKitRoom(data.livekit.url, data.livekit.token);
-
-      // We do NOT await prefetchMeeting here. We want to navigate immediately and let 
-      // React.Suspense handle the loading state, so the UI feels instantly responsive!
 
       navigate(`/meeting/${data.meeting.room_code}`, {
         state: {
           meeting: data.meeting,
           livekit: data.livekit,
           isHost: true,
-          joinStartTime,
+          joinStartTime: performance.now(),
         },
       });
     } catch (err: any) {
@@ -145,30 +166,23 @@ export default function Dashboard() {
 
     setIsJoining(true);
     setJoinError('');
-    const joinStartTime = performance.now();
-    console.log(`[⏱️ Profiling] 1. "Join Meeting" clicked at 0ms`);
 
     try {
-      // PROFILING OPTIMIZATION: Parallel prefetch of the heavy WebRTC chunk
-      const prefetchMeeting = import('./Meeting');
+      import('./Meeting');
 
       const { data } = await api.post('/meetings/join', {
         roomCode: roomCode.trim().toUpperCase(),
         displayName: user?.name,
       });
-      console.log(`[⏱️ Profiling] 2. API /join responded in ${(performance.now() - joinStartTime).toFixed(0)}ms`);
 
-      // PROFILING OPTIMIZATION: Start WebRTC background negotiation BEFORE React even navigates
       prepareLiveKitRoom(data.livekit.url, data.livekit.token);
-
-      // We do NOT await prefetchMeeting here. We navigate immediately!
 
       navigate(`/meeting/${data.meeting.room_code}`, {
         state: {
           meeting: data.meeting,
           livekit: data.livekit,
           isHost: !!data.isHost,
-          joinStartTime,
+          joinStartTime: performance.now(),
         },
       });
     } catch (err: any) {
@@ -206,22 +220,28 @@ export default function Dashboard() {
 
   const startScheduledMeeting = async (code: string) => {
     setIsJoining(true);
-    const joinStartTime = performance.now();
+    setAlertMessage('');
     try {
+      import('./Meeting');
+
       const { data } = await api.post('/meetings/join', {
         roomCode: code,
         displayName: user?.name,
       });
+
+      prepareLiveKitRoom(data.livekit.url, data.livekit.token);
+
       navigate(`/meeting/${data.meeting.room_code}`, {
         state: {
           meeting: data.meeting,
           livekit: data.livekit,
           isHost: !!data.isHost,
-          joinStartTime,
+          joinStartTime: performance.now(),
         },
       });
     } catch (err: any) {
       setAlertMessage(err.response?.data?.error || 'Failed to start meeting');
+    } finally {
       setIsJoining(false);
     }
   };
@@ -234,17 +254,16 @@ export default function Dashboard() {
     if (!meetingToDelete) return;
     const targetId = meetingToDelete;
     setMeetingToDelete(null);
-    
-    // Optimistic UI update
+
     setRecentMeetings(prev => prev.filter(m => m.id !== targetId));
-    
+    setScheduledMeetings(prev => prev.filter(m => m.id !== targetId));
+
     try {
       await api.delete(`/meetings/${targetId}`);
     } catch (err: any) {
-      // Revert if error isn't 404
       if (err.response?.status !== 404) {
         setAlertMessage(err.response?.data?.error || 'Failed to delete meeting');
-        fetchMeetings(); // Re-fetch to restore
+        fetchMeetings();
       }
     }
   };
@@ -256,9 +275,7 @@ export default function Dashboard() {
     try {
       const { data } = await api.get(`/meetings/${meetingId}/recordings`);
       setSelectedRecordings(data.recordings || []);
-    } catch (err) {
-      console.error('Failed to fetch recordings', err);
-    } finally {
+    } catch {} finally {
       setIsLoadingRecordings(false);
     }
   };
@@ -270,9 +287,7 @@ export default function Dashboard() {
     try {
       const { data } = await api.get(`/meetings/recordings/all`);
       setSelectedRecordings(data.recordings || []);
-    } catch (err) {
-      console.error('Failed to fetch recordings', err);
-    } finally {
+    } catch {} finally {
       setIsLoadingRecordings(false);
     }
   };
@@ -281,16 +296,13 @@ export default function Dashboard() {
     if (!deleteRecordingId) return;
     const targetId = deleteRecordingId;
     setDeleteRecordingId(null);
-    
-    // Optimistic UI update
+
     setSelectedRecordings(prev => prev.filter(r => r.id !== targetId));
-    
+
     try {
       await api.delete(`/meetings/recordings/${targetId}`);
     } catch (err: any) {
-      console.error('Failed to delete recording', err);
       setAlertMessage(err.response?.data?.error || 'Failed to delete recording');
-      // In a real app we'd revert the state here, but for now just show error
     }
   };
 
@@ -303,39 +315,29 @@ export default function Dashboard() {
     ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     : '?';
 
-  const getLearningStats = () => {
+  const learningStats = useMemo(() => {
     let totalMinutes = 0;
-    
     recentMeetings.forEach(m => {
       if (m.created_at) {
         const start = new Date(m.created_at).getTime();
         const end = m.ended_at ? new Date(m.ended_at).getTime() : Date.now();
         const diffMins = (end - start) / (1000 * 60);
-        if (diffMins > 0) {
-          totalMinutes += diffMins;
-        }
+        if (diffMins > 0) totalMinutes += diffMins;
       }
     });
 
-    if (totalMinutes < 1) {
-      return { value: 0, label: 'Minutes of Learning' };
-    } else if (totalMinutes < 60) {
-      return { value: Math.floor(totalMinutes), label: 'Minutes of Learning' };
-    } else {
-      const hours = Math.floor(totalMinutes / 60);
-      const mins = Math.floor(totalMinutes % 60);
-      if (mins === 0) {
-        return { value: hours, label: hours === 1 ? 'Hour of Learning' : 'Hours of Learning' };
-      }
-      return { value: `${hours}h ${mins}m`, label: 'Total Learning Time' };
-    }
-  };
+    if (totalMinutes < 1) return { value: 0, label: 'Minutes of Learning' };
+    if (totalMinutes < 60) return { value: Math.floor(totalMinutes), label: 'Minutes of Learning' };
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = Math.floor(totalMinutes % 60);
+    if (mins === 0) return { value: hours, label: hours === 1 ? 'Hour of Learning' : 'Hours of Learning' };
+    return { value: `${hours}h ${mins}m`, label: 'Total Learning Time' };
+  }, [recentMeetings]);
 
-  const learningStats = getLearningStats();
+  const activeCount = useMemo(() => recentMeetings.filter(m => m.is_active).length, [recentMeetings]);
 
   return (
     <div className="dashboard">
-      {/* Mobile sidebar toggle */}
       <button
         className="sidebar-toggle"
         onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -348,7 +350,6 @@ export default function Dashboard() {
         onClick={() => setSidebarOpen(false)}
       />
 
-      {/* Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar__header">
           <div className="sidebar__logo">
@@ -413,9 +414,7 @@ export default function Dashboard() {
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="dashboard__main">
-        {/* Header Greeting */}
         <header className="dashboard__header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
           <div>
             <h1 className="dashboard__greeting">
@@ -424,37 +423,9 @@ export default function Dashboard() {
             </h1>
             <p className="dashboard__date">{getDate()}</p>
           </div>
-
-          <div className="dashboard__live-clock" style={{
-            fontSize: '1.1rem',
-            fontFamily: 'var(--font-heading)',
-            fontWeight: 600,
-            color: 'var(--color-text-primary)',
-            background: 'rgba(255, 255, 255, 0.8)',
-            backdropFilter: 'blur(10px)',
-            WebkitBackdropFilter: 'blur(10px)',
-            padding: '8px 24px',
-            borderRadius: '100px',
-            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.03)',
-            border: '1px solid rgba(255, 255, 255, 0.6)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            letterSpacing: '1px'
-          }}>
-            <span style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              backgroundColor: '#E53E3E',
-              boxShadow: '0 0 8px rgba(229, 62, 62, 0.5)',
-              animation: 'pulse 2s infinite'
-            }}></span>
-            {new Date(currentTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-          </div>
+          <LiveClock />
         </header>
 
-        {/* Quick Actions */}
         <div className="quick-actions">
           <button
             className="quick-action-card quick-action-card--create"
@@ -493,7 +464,6 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Stats */}
         <div className="stats-grid">
           <div className="stat-card">
             <span className="stat-card__icon">🎵</span>
@@ -507,7 +477,7 @@ export default function Dashboard() {
           </div>
           <div className="stat-card">
             <span className="stat-card__icon">🏆</span>
-            <div className="stat-card__value">{recentMeetings.filter(m => m.is_active).length}</div>
+            <div className="stat-card__value">{activeCount}</div>
             <div className="stat-card__label">Active Now</div>
           </div>
           <div className="stat-card">
@@ -517,7 +487,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Upcoming Classes */}
         {scheduledMeetings.length > 0 && (
           <>
             <h2 className="section-title">📆 Upcoming Classes</h2>
@@ -549,10 +518,10 @@ export default function Dashboard() {
                       cursor: new Date(meeting.scheduled_for!).getTime() <= currentTime ? 'pointer' : 'not-allowed'
                     }}
                     onClick={() => startScheduledMeeting(meeting.room_code)}
-                    disabled={new Date(meeting.scheduled_for!).getTime() > currentTime}
+                    disabled={new Date(meeting.scheduled_for!).getTime() > currentTime || isJoining}
                     title={new Date(meeting.scheduled_for!).getTime() > currentTime ? "You can start the class once the scheduled time arrives" : ""}
                   >
-                    ▶ Start Class
+                    {isJoining ? 'Starting...' : '▶ Start Class'}
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDeleteMeeting(meeting.id); }}
@@ -567,7 +536,6 @@ export default function Dashboard() {
           </>
         )}
 
-        {/* Recent Meetings */}
         <h2 className="section-title">📋 Recent Meetings</h2>
         <div className="meetings-list">
           {recentMeetings.length === 0 ? (
@@ -591,8 +559,7 @@ export default function Dashboard() {
                 </div>
                 <span className="meeting-item__code">{meeting.room_code}</span>
                 <span
-                  className={`meeting-item__status ${meeting.is_active ? 'meeting-item__status--active' : 'meeting-item__status--ended'
-                    }`}
+                  className={`meeting-item__status ${meeting.is_active ? 'meeting-item__status--active' : 'meeting-item__status--ended'}`}
                 >
                   {meeting.is_active ? '● Live' : 'Ended'}
                 </span>
@@ -616,7 +583,6 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* Join Meeting Modal */}
       {showJoinModal && (
         <div className="modal-overlay" onClick={() => setShowJoinModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -656,7 +622,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Create Meeting Modal */}
       {showCreateModal && (
         <div className="modal-overlay" onClick={() => setShowCreateModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -695,7 +660,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Schedule Meeting Modal */}
       {showScheduleModal && (
         <div className="modal-overlay" onClick={() => setShowScheduleModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -758,7 +722,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Alert Modal */}
       {alertMessage && (
         <div className="modal-overlay" onClick={() => setAlertMessage(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -776,7 +739,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Confirm Delete Modal */}
       {meetingToDelete && (
         <div className="modal-overlay" onClick={() => setMeetingToDelete(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -801,7 +763,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Recordings Modal */}
       {showRecordingsModal && (
         <div className="modal-overlay" onClick={() => setShowRecordingsModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
@@ -876,7 +837,6 @@ export default function Dashboard() {
               Close
             </button>
 
-            {/* Custom Delete Confirmation Modal overlaying this modal */}
             {deleteRecordingId && (
               <div style={{
                 position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
@@ -912,7 +872,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Logout Confirmation Modal */}
       {showLogoutConfirm && (
         <div className="modal-overlay" onClick={() => setShowLogoutConfirm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center', padding: '32px 24px', maxWidth: '340px' }}>
@@ -921,13 +880,13 @@ export default function Dashboard() {
               Are you sure you want to log out of your account?
             </p>
             <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
-              <button 
+              <button
                 onClick={() => setShowLogoutConfirm(false)}
                 style={{ flex: 1, padding: '10px', background: '#F3F4F6', color: '#374151', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}
               >
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={() => {
                   setShowLogoutConfirm(false);
                   logout();

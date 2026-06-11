@@ -11,14 +11,14 @@ const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const db_1 = require("../models/db");
 const jwt_service_1 = require("../services/jwt.service");
 const auth_middleware_1 = require("../middleware/auth.middleware");
+const logger_1 = require("../lib/logger");
+const config_1 = require("../config");
 const router = (0, express_1.Router)();
-// Rate limiters
 const authLimiter = (0, express_rate_limit_1.default)({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10, // Limit each IP to 10 requests per `window`
+    windowMs: 15 * 60 * 1000,
+    max: 10,
     message: { error: 'Too many requests from this IP, please try again later' },
 });
-// Zod schemas
 const signupSchema = zod_1.z.object({
     name: zod_1.z.string().min(2, 'Name must be at least 2 characters').max(50),
     email: zod_1.z.string().email('Invalid email address'),
@@ -31,18 +31,15 @@ const loginSchema = zod_1.z.object({
 });
 const cookieOptions = {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
+    secure: config_1.config.isProduction,
+    sameSite: (config_1.config.isProduction ? 'none' : 'lax'),
     path: '/',
+    maxAge: 24 * 60 * 60 * 1000,
 };
-// Random avatar colors matching the Sangeet Arghya theme
 const AVATAR_COLORS = [
     '#7B2D26', '#8B4513', '#D4722A', '#B8860B', '#2D5F2D',
     '#4A1A2E', '#6B3A5E', '#1B5E20', '#C4932A', '#A0522D',
 ];
-/**
- * POST /api/auth/signup
- */
 router.post('/signup', authLimiter, async (req, res) => {
     try {
         const parsedBody = signupSchema.safeParse(req.body);
@@ -51,13 +48,11 @@ router.post('/signup', authLimiter, async (req, res) => {
             return;
         }
         const { name, email, password, role } = parsedBody.data;
-        // Check if user already exists
         const existing = await db_1.userQueries.findByEmail(email);
         if (existing) {
             res.status(409).json({ error: 'Email already registered' });
             return;
         }
-        // Hash password
         const salt = await bcryptjs_1.default.genSalt(10);
         const passwordHash = await bcryptjs_1.default.hash(password, salt);
         const userId = (0, uuid_1.v4)();
@@ -68,8 +63,6 @@ router.post('/signup', authLimiter, async (req, res) => {
             accessToken: jwt_service_1.jwtService.signAccessToken({ userId, email, role: userRole }),
             refreshToken: jwt_service_1.jwtService.signRefreshToken({ userId, email, role: userRole }),
         };
-        // No maxAge provided: these become strict Session Cookies.
-        // The browser will automatically delete them when the browser closes.
         res.cookie('accessToken', tokens.accessToken, cookieOptions);
         res.cookie('refreshToken', tokens.refreshToken, cookieOptions);
         res.status(201).json({
@@ -77,13 +70,10 @@ router.post('/signup', authLimiter, async (req, res) => {
         });
     }
     catch (error) {
-        console.error('Signup error:', error);
+        logger_1.logger.error('Signup error', { error });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
-/**
- * POST /api/auth/login
- */
 router.post('/login', authLimiter, async (req, res) => {
     try {
         const parsedBody = loginSchema.safeParse(req.body);
@@ -106,7 +96,6 @@ router.post('/login', authLimiter, async (req, res) => {
             accessToken: jwt_service_1.jwtService.signAccessToken({ userId: user.id, email: user.email, role: user.role }),
             refreshToken: jwt_service_1.jwtService.signRefreshToken({ userId: user.id, email: user.email, role: user.role }),
         };
-        // No maxAge provided: these become strict Session Cookies.
         res.cookie('accessToken', tokens.accessToken, cookieOptions);
         res.cookie('refreshToken', tokens.refreshToken, cookieOptions);
         res.json({
@@ -120,13 +109,10 @@ router.post('/login', authLimiter, async (req, res) => {
         });
     }
     catch (error) {
-        console.error('Login error:', error);
+        logger_1.logger.error('Login error', { error });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
-/**
- * GET /api/auth/me
- */
 router.get('/me', auth_middleware_1.authMiddleware, async (req, res) => {
     try {
         const user = await db_1.userQueries.findById(req.user.userId);
@@ -146,13 +132,10 @@ router.get('/me', auth_middleware_1.authMiddleware, async (req, res) => {
         });
     }
     catch (error) {
-        console.error('Get me error:', error);
+        logger_1.logger.error('Get me error', { error });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
-/**
- * POST /api/auth/refresh
- */
 router.post('/refresh', (req, res) => {
     try {
         const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
@@ -173,12 +156,9 @@ router.post('/refresh', (req, res) => {
         res.status(401).json({ error: 'Invalid refresh token' });
     }
 });
-/**
- * POST /api/auth/logout
- */
 router.post('/logout', (req, res) => {
-    res.clearCookie('accessToken');
-    res.clearCookie('refreshToken');
+    res.clearCookie('accessToken', { path: '/' });
+    res.clearCookie('refreshToken', { path: '/' });
     res.json({ success: true });
 });
 exports.default = router;
