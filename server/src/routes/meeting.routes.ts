@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
-import db, { meetingQueries, recordingQueries } from '../models/db';
+import db, { meetingQueries } from '../models/db';
 import { livekitService } from '../services/livekit.service';
 import { authMiddleware, AuthRequest } from '../middleware/auth.middleware';
 import { logger } from '../lib/logger';
@@ -38,6 +38,7 @@ const endSchema = z.object({
 });
 
 router.post('/create', async (req: AuthRequest, res: Response): Promise<void> => {
+  const startTime = Date.now();
   try {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -65,6 +66,9 @@ router.post('/create', async (req: AuthRequest, res: Response): Promise<void> =>
       true
     );
 
+    const endTime = Date.now();
+    logger.info(`[API] POST /meetings/create took ${endTime - startTime}ms`);
+
     res.status(201).json({
       meeting: {
         id: meetingId,
@@ -85,6 +89,7 @@ router.post('/create', async (req: AuthRequest, res: Response): Promise<void> =>
 });
 
 router.post('/schedule', async (req: AuthRequest, res: Response): Promise<void> => {
+  const startTime = Date.now();
   try {
     const parsed = scheduleSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -107,6 +112,9 @@ router.post('/schedule', async (req: AuthRequest, res: Response): Promise<void> 
 
     await meetingQueries.schedule(meetingId, roomCode, meetingTitle, req.user!.userId, 100, scheduledFor);
 
+    const endTime = Date.now();
+    logger.info(`[API] POST /meetings/schedule took ${endTime - startTime}ms`);
+
     res.status(201).json({
       meeting: {
         id: meetingId,
@@ -123,6 +131,7 @@ router.post('/schedule', async (req: AuthRequest, res: Response): Promise<void> 
 });
 
 router.post('/join', async (req: AuthRequest, res: Response): Promise<void> => {
+  const startTime = Date.now();
   try {
     const parsed = joinSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -160,6 +169,9 @@ router.post('/join', async (req: AuthRequest, res: Response): Promise<void> => {
     } catch (dbError) {
       logger.error('Failed to record meeting participant', { error: dbError });
     }
+
+    const endTime = Date.now();
+    logger.info(`[API] POST /meetings/join took ${endTime - startTime}ms`);
 
     res.json({
       meeting: {
@@ -206,19 +218,6 @@ router.post('/end', async (req: AuthRequest, res: Response): Promise<void> => {
     const { io } = await import('../index');
     io.to(cleanRoomCode).emit('meeting-ended');
     io.emit('meeting-ended-global', cleanRoomCode);
-
-    const recordings = await recordingQueries.getByMeetingId(meeting.id);
-    const activeRecording = recordings.find(r => r.status === 'recording');
-
-    if (activeRecording) {
-      try {
-        await livekitService.stopRecording(activeRecording.egress_id);
-        await recordingQueries.updateStatus('completed', activeRecording.egress_id);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } catch (err) {
-        logger.error('Failed to gracefully stop recording before ending room', { error: err });
-      }
-    }
 
     livekitService.endRoom(cleanRoomCode);
 
@@ -286,157 +285,6 @@ router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => 
   } catch (error) {
     logger.error('Delete meeting error', { error });
     res.status(500).json({ error: 'Failed to delete meeting' });
-  }
-});
-
-router.post('/record/start', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { roomCode, publicUrl } = req.body;
-    if (!roomCode || !publicUrl) {
-      res.status(400).json({ error: 'Room code and publicUrl are required' });
-      return;
-    }
-
-    const meeting = await meetingQueries.findByCode(roomCode);
-    if (!meeting) {
-      res.status(404).json({ error: 'Meeting not found' });
-      return;
-    }
-
-    if (meeting.host_id !== req.user!.userId) {
-      res.status(403).json({ error: 'Only the host can start recording' });
-      return;
-    }
-
-    let finalPublicUrl = publicUrl;
-    if (publicUrl.includes('localhost') || !publicUrl.startsWith('http')) {
-      finalPublicUrl = process.env.CLIENT_URL || 'https://demo-mobile-app-liart.vercel.app';
-    }
-
-    const { egressId, fileUrl } = await livekitService.startRecording(roomCode, finalPublicUrl);
-
-    const recordingId = uuidv4();
-    await recordingQueries.create(
-      recordingId,
-      meeting.id,
-      req.user!.userId,
-      egressId,
-      'recording',
-      fileUrl
-    );
-
-    res.json({ message: 'Recording started', egressId, fileUrl });
-  } catch (error: any) {
-    logger.error('Start recording error', { error });
-    res.status(500).json({ error: error.message || 'Failed to start recording' });
-  }
-});
-
-router.post('/record/stop', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { egressId, roomCode } = req.body;
-    if (!egressId || !roomCode) {
-      res.status(400).json({ error: 'Egress ID and roomCode are required' });
-      return;
-    }
-
-    const meeting = await meetingQueries.findByCode(roomCode);
-    if (!meeting) {
-      res.status(404).json({ error: 'Meeting not found' });
-      return;
-    }
-
-    try {
-      await livekitService.stopRecording(egressId);
-    } catch (err: any) {
-      if (err.message && err.message.includes('EGRESS_COMPLETE')) {
-        logger.info(`Egress ${egressId} was already completed when trying to stop. Marking as complete.`);
-      } else {
-        throw err;
-      }
-    }
-
-    await recordingQueries.updateStatus('completed', egressId);
-
-    res.json({ message: 'Recording stopped' });
-  } catch (error: any) {
-    logger.error('Stop recording error', { error });
-    res.status(500).json({ error: error.message || 'Failed to stop recording' });
-  }
-});
-
-router.delete('/recordings/:id', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const recording = await recordingQueries.findById(id as string);
-
-    if (!recording) {
-      res.status(404).json({ error: 'Recording not found' });
-      return;
-    }
-
-    const meeting = await meetingQueries.findById(recording.meeting_id);
-    if (!meeting || meeting.host_id !== req.user!.userId) {
-      res.status(403).json({ error: 'Only the meeting host can delete recordings' });
-      return;
-    }
-
-    await recordingQueries.deleteById(id as string);
-    res.json({ message: 'Recording deleted successfully' });
-  } catch (error) {
-    logger.error('Delete recording error', { error });
-    res.status(500).json({ error: 'Failed to delete recording' });
-  }
-});
-
-async function syncStaleRecordings(recordings: any[]) {
-  const stale = recordings.filter(r => r.status === 'recording');
-  if (stale.length === 0) return;
-
-  await Promise.all(stale.map(async (r) => {
-    try {
-      const status = await livekitService.getEgressStatus(r.egress_id);
-      if (status === 'EGRESS_COMPLETE' || status === '3' || status === 'completed') {
-        await recordingQueries.updateStatus('completed', r.egress_id);
-        r.status = 'completed';
-      } else if (status === 'EGRESS_FAILED' || status === '4' || status === 'EGRESS_ABORTED' || status === '5' || status === 'failed') {
-        await recordingQueries.updateStatus('failed', r.egress_id);
-        r.status = 'failed';
-      }
-    } catch {
-      // Non-critical, skip
-    }
-  }));
-}
-
-router.get('/recordings/all', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    const recordings = await recordingQueries.getAllForUser(userId);
-    await syncStaleRecordings(recordings);
-    res.json({ recordings });
-  } catch (error) {
-    logger.error('Get all recordings error', { error });
-    res.status(500).json({ error: 'Failed to fetch recordings' });
-  }
-});
-
-router.get('/:id/recordings', async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const allRecordings = await recordingQueries.getByMeetingId(id as string);
-    const meeting = await meetingQueries.findById(id as string);
-
-    const recordings = allRecordings.map(r => ({ ...r, host_id: meeting?.host_id, meeting_title: meeting?.title }));
-    await syncStaleRecordings(recordings);
-    res.json({ recordings });
-  } catch (error) {
-    logger.error('Get recordings error', { error });
-    res.status(500).json({ error: 'Failed to fetch recordings' });
   }
 });
 

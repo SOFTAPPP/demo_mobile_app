@@ -17,6 +17,9 @@ const api = axios.create({
 
 // Request interceptor: attach Bearer token for native apps
 api.interceptors.request.use((config) => {
+  // @ts-ignore
+  config.metadata = { startTime: Date.now() };
+
   if (isNative) {
     const token = localStorage.getItem('accessToken');
     if (token) {
@@ -28,7 +31,12 @@ api.interceptors.request.use((config) => {
 
 // Response interceptor: handle 401 refresh
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // @ts-ignore
+    const duration = Date.now() - response.config.metadata.startTime;
+    console.log(`[API] ${response.config.method?.toUpperCase()} ${response.config.url} took ${duration}ms`);
+    return response;
+  },
   async (error) => {
     const originalRequest = error.config;
     const isAuthRequest = originalRequest?.url?.includes('/auth/login') || originalRequest?.url?.includes('/auth/signup') || originalRequest?.url?.includes('/auth/refresh');

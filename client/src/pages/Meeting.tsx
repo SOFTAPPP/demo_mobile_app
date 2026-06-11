@@ -9,7 +9,7 @@ import {
   VideoTrack,
 } from '@livekit/components-react';
 import { LocalAudioTrack, RoomEvent, Track } from 'livekit-client';
-import { Disc, LogOut, Mic, MicOff, Palette, PhoneOff, Square, Users, Video as VideoIcon, VideoOff } from 'lucide-react';
+import { Disc, LogOut, Mic, MicOff, Palette, PhoneOff, Users, Video as VideoIcon, VideoOff } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -32,24 +32,7 @@ const playSound = (type: 'record-start' | 'record-stop' | 'user-join' | 'user-le
     osc.type = 'sine';
     const now = audioCtx.currentTime;
 
-    if (type === 'record-start') {
-      osc.frequency.setValueAtTime(880, now);
-      osc.frequency.setValueAtTime(1046.50, now + 0.1);
-      gainNode.gain.setValueAtTime(0, now);
-      gainNode.gain.linearRampToValueAtTime(0.2, now + 0.02);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
-      gainNode.gain.linearRampToValueAtTime(0.2, now + 0.12);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
-      osc.start(now);
-      osc.stop(now + 0.3);
-    } else if (type === 'record-stop') {
-      osc.frequency.setValueAtTime(440, now);
-      gainNode.gain.setValueAtTime(0, now);
-      gainNode.gain.linearRampToValueAtTime(0.2, now + 0.02);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
-      osc.start(now);
-      osc.stop(now + 0.25);
-    } else if (type === 'user-join') {
+    if (type === 'user-join') {
       osc.frequency.setValueAtTime(523.25, now);
       osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.1);
       gainNode.gain.setValueAtTime(0, now);
@@ -122,9 +105,6 @@ export default function Meeting() {
   const [connectionError, setConnectionError] = useState<string>('');
   const [theme, setTheme] = useState<'light' | 'maroon'>('light');
   const [isHost, setIsHost] = useState(!!location.state?.isHost);
-  const [isRecording, setIsRecording] = useState(false);
-  const [egressId, setEgressId] = useState<string | null>(null);
-  const [recordingToast, setRecordingToast] = useState<{ show: boolean, type: 'start' | 'stop' | null }>({ show: false, type: null });
   const prewarmedRoom = useRef(getSharedRoom());
 
   useEffect(() => {
@@ -140,37 +120,10 @@ export default function Meeting() {
       navigate('/meeting-ended', { state: { roomCode } });
     };
 
-    const onRecordingStarted = () => {
-      setIsRecording((prev) => {
-        if (!prev) {
-          setRecordingToast({ show: true, type: 'start' });
-          playSound('record-start');
-          return true;
-        }
-        return prev;
-      });
-    };
-
-    const onRecordingStopped = () => {
-      setIsRecording((prev) => {
-        if (prev) {
-          setRecordingToast({ show: true, type: 'stop' });
-          playSound('record-stop');
-          setEgressId(null);
-          return false;
-        }
-        return prev;
-      });
-    };
-
     socket.on('meeting-ended', onMeetingEnded);
-    socket.on('recording-started', onRecordingStarted);
-    socket.on('recording-stopped', onRecordingStopped);
 
     return () => {
       socket.off('meeting-ended', onMeetingEnded);
-      socket.off('recording-started', onRecordingStarted);
-      socket.off('recording-stopped', onRecordingStopped);
       socket.emit('leave-room', roomCode);
     };
   }, [roomCode, navigate]);
@@ -184,7 +137,7 @@ export default function Meeting() {
       if (botToken && lkUrl) {
         setLivekitToken(botToken);
         setLivekitUrl(lkUrl);
-        setMeetingTitle('Class Recording');
+        setMeetingTitle('Class Server');
         setIsHost(false);
         setIsConnecting(false);
       } else {
@@ -211,16 +164,11 @@ export default function Meeting() {
   };
 
   const handleLeave = useCallback(async () => {
-    if (isHost && isRecording && egressId) {
-      try {
-        await api.post('/meetings/record/stop', { egressId, roomCode });
-      } catch {}
-    }
     isLeavingManually.current = true;
     clearSharedRoom();
     disconnectSocket();
     navigate('/dashboard');
-  }, [isHost, isRecording, egressId, roomCode, navigate]);
+  }, [isHost, roomCode, navigate]);
 
   const handleEnd = useCallback(() => {
     if (isHost) {
@@ -232,23 +180,7 @@ export default function Meeting() {
     }
   }, [isHost, roomCode, navigate]);
 
-  const handleOptimisticStart = useCallback((newEgressId: string) => {
-    setEgressId(newEgressId);
-    setIsRecording(true);
-    if (newEgressId !== 'temp_id_loading') {
-      playSound('record-start');
-      setRecordingToast({ show: true, type: 'start' });
-      setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
-    }
-  }, []);
 
-  const handleOptimisticStop = useCallback(() => {
-    setEgressId(null);
-    setIsRecording(false);
-    playSound('record-stop');
-    setRecordingToast({ show: true, type: 'stop' });
-    setTimeout(() => setRecordingToast({ show: false, type: null }), 3500);
-  }, []);
 
   if (isConnecting) {
     return (
@@ -312,10 +244,6 @@ export default function Meeting() {
             theme={theme}
             onToggleTheme={() => setTheme(t => t === 'light' ? 'maroon' : 'light')}
             joinStartTime={location.state?.joinStartTime}
-            isRecording={isRecording}
-            egressId={egressId}
-            onOptimisticStart={handleOptimisticStart}
-            onOptimisticStop={handleOptimisticStop}
           />
           <RoomAudioRenderer />
         </LiveKitRoom>
@@ -327,42 +255,6 @@ export default function Meeting() {
           to { top: 20px; opacity: 1; }
         }
       `}</style>
-      {recordingToast.show && (
-        <div style={{
-          position: 'fixed',
-          top: '20px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: recordingToast.type === 'start'
-            ? 'linear-gradient(135deg, rgba(220, 38, 38, 0.95) 0%, rgba(185, 28, 28, 0.95) 100%)'
-            : 'linear-gradient(135deg, rgba(37, 99, 235, 0.95) 0%, rgba(29, 78, 216, 0.95) 100%)',
-          color: 'white',
-          padding: '16px 24px',
-          borderRadius: '12px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '14px',
-          zIndex: 9999,
-          boxShadow: '0 10px 40px rgba(0,0,0,0.3)',
-          backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(255,255,255,0.2)',
-          animation: 'slideDown 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
-        }}>
-          <div style={{ fontSize: '1.8rem', animation: recordingToast.type === 'start' ? 'pulse 1.5s infinite' : 'none', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }}>
-            {recordingToast.type === 'start' ? '🔴' : '✅'}
-          </div>
-          <div>
-            <h4 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: '#ffffff', letterSpacing: '0.5px' }}>
-              Recording {recordingToast.type === 'start' ? 'Started' : 'Saved'}
-            </h4>
-            <p style={{ margin: '4px 0 0 0', fontSize: '0.9rem', color: 'rgba(255,255,255,0.9)' }}>
-              {recordingToast.type === 'start'
-                ? 'This session is now being recorded.'
-                : 'The recording is now available on your dashboard.'}
-            </p>
-          </div>
-        </div>
-      )}
     </MeetingErrorBoundary>
   );
 }
@@ -377,11 +269,7 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
   clearConnectionError,
   theme,
   onToggleTheme,
-  joinStartTime,
-  isRecording,
-  egressId,
-  onOptimisticStart,
-  onOptimisticStop
+  joinStartTime
 }: {
   roomCode: string;
   meetingTitle: string;
@@ -393,10 +281,6 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
   theme: 'light' | 'maroon';
   onToggleTheme: () => void;
   joinStartTime?: number;
-  isRecording?: boolean;
-  egressId: string | null;
-  onOptimisticStart?: (egressId: string) => void;
-  onOptimisticStop?: () => void;
 }) {
   const room = useRoomContext();
   const connectionState = useConnectionState();
@@ -405,22 +289,17 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
   const [elapsed, setElapsed] = useState(0);
   const [showParticipants, setShowParticipants] = useState(false);
   const [musicMode, setMusicMode] = useState(false);
-  const [isRecordLoading, setIsRecordLoading] = useState(false);
 
   useEffect(() => {
     if (!room) return;
 
     const onParticipantConnected = (participant: any) => {
       if (!participant.name || participant.isHidden) return;
-      const id = participant?.identity?.toLowerCase() || '';
-      if (id.startsWith('eg_') || id.includes('egress') || id.includes('recorder')) return;
       playSound('user-join');
     };
 
     const onParticipantDisconnected = (participant: any) => {
       if (!participant.name || participant.isHidden) return;
-      const id = participant?.identity?.toLowerCase() || '';
-      if (id.startsWith('eg_') || id.includes('egress') || id.includes('recorder')) return;
       playSound('user-leave');
     };
 
@@ -464,22 +343,7 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
     { onlySubscribed: false }
   );
 
-  const [recElapsed, setRecElapsed] = useState(0);
 
-  useEffect(() => {
-    const elapsedTimer = setInterval(() => setElapsed((prev) => prev + 1), 1000);
-    return () => clearInterval(elapsedTimer);
-  }, []);
-
-  useEffect(() => {
-    let timer: any;
-    if (isRecording) {
-      timer = setInterval(() => setRecElapsed((p) => p + 1), 1000);
-    } else {
-      setRecElapsed(0);
-    }
-    return () => clearInterval(timer);
-  }, [isRecording]);
 
   const formatTime = useCallback((seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -523,7 +387,7 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
   }, [musicMode, displayMic, localParticipant]);
 
   const displayTracks = useMemo(() =>
-    tracks.filter(t => !t.participant.identity.includes('bot-recorder') && t.participant.name !== 'Class Recorder'),
+    tracks.filter(t => !t.participant.identity.includes('bot')),
     [tracks]
   );
 
@@ -531,72 +395,6 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
     displayTracks.length <= 2 ? 'video-grid--2' :
       displayTracks.length <= 4 ? 'video-grid--4' : 'video-grid--many';
 
-  const handleRecordToggle = useCallback(async () => {
-    try {
-      setIsRecordLoading(true);
-      if (isRecording && egressId) {
-        if (onOptimisticStop) onOptimisticStop();
-
-        const socket = getSocket();
-        socket.emit('recording-stopped', roomCode);
-
-        api.post('/meetings/record/stop', { egressId, roomCode }).catch(() => {});
-      } else {
-        if (onOptimisticStart) onOptimisticStart('temp_id_loading');
-
-        const socket = getSocket();
-        socket.emit('recording-started', roomCode);
-
-        // Async dummy track publishing to avoid blocking the UI
-        let totalTracks = 0;
-        room.remoteParticipants.forEach((p) => { totalTracks += p.trackPublications.size; });
-        totalTracks += room.localParticipant.trackPublications.size;
-
-        if (totalTracks === 0) {
-          (async () => {
-            try {
-              const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-              const oscillator = ctx.createOscillator();
-              const gainNode = ctx.createGain();
-              gainNode.gain.value = 0;
-              const dst = ctx.createMediaStreamDestination();
-              oscillator.connect(gainNode);
-              gainNode.connect(dst);
-              oscillator.start();
-
-              const track = dst.stream.getAudioTracks()[0];
-              const dummyTrack = new LocalAudioTrack(track);
-              await room.localParticipant.publishTrack(dummyTrack, { name: 'silence', source: Track.Source.Unknown });
-
-              setTimeout(() => {
-                room.localParticipant.unpublishTrack(dummyTrack).catch(() => {});
-              }, 10000);
-            } catch {}
-          })();
-        }
-
-        const fallbackUrl = 'https://demo-mobile-app-liart.vercel.app';
-        const currentUrl = window.location.origin;
-        const finalUrl = currentUrl.includes('localhost') ? fallbackUrl : currentUrl;
-
-        const { data } = await api.post('/meetings/record/start', {
-          roomCode,
-          publicUrl: finalUrl
-        });
-        if (onOptimisticStart) onOptimisticStart(data.egressId);
-      }
-    } catch (e: any) {
-      setAlertMessage(e.response?.data?.error || 'Failed to toggle recording.');
-
-      if (isRecording) {
-        if (onOptimisticStart && egressId) onOptimisticStart(egressId);
-      } else {
-        if (onOptimisticStop) onOptimisticStop();
-      }
-    } finally {
-      setIsRecordLoading(false);
-    }
-  }, [isRecording, egressId, roomCode, room, onOptimisticStart, onOptimisticStop]);
 
   return (
     <div className="meeting-room" style={{ height: '100dvh', width: '100%' }}>
@@ -633,24 +431,6 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
           }}>
             LIVE
           </span>
-          {isRecording && (
-            <span style={{
-              fontSize: '0.75rem',
-              background: 'rgba(220, 38, 38, 0.15)',
-              color: '#EF4444',
-              padding: '4px 10px',
-              borderRadius: '6px',
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
-              animation: 'pulse 2s infinite'
-            }}>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#EF4444' }} />
-              REC {formatTime(recElapsed)}
-            </span>
-          )}
         </div>
         <div className="meeting-room__header-right">
           <button className="theme-toggle-btn" onClick={onToggleTheme} title="Toggle Theme">
@@ -772,18 +552,6 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
             <span className="control-btn__tooltip">Leave</span>
           </button>
 
-          <button
-            className={`control-btn ${isRecording ? 'control-btn--active' : 'control-btn--default'}`}
-            onClick={handleRecordToggle}
-            disabled={isRecordLoading}
-            style={isRecording
-              ? { background: '#DC2626', color: 'white', borderColor: '#DC2626', animation: 'pulse 2s infinite' }
-              : { background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.3)' }
-            }
-          >
-            {isRecording ? <Square size={22} fill="currentColor" /> : <Disc size={22} />}
-            <span className="control-btn__tooltip">{isRecording ? 'Stop Recording' : 'Record Class'}</span>
-          </button>
 
           {isHost && (
             <button className="control-btn control-btn--end" onClick={() => setConfirmAction('end')}>

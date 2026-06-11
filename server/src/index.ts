@@ -42,6 +42,15 @@ app.use(cookieParser());
 
 app.use(morgan('combined', { stream: { write: (message) => logger.info(message.trim()) } }));
 
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info(`[API] ${req.method} ${req.originalUrl} took ${duration}ms`);
+  });
+  next();
+});
+
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
@@ -66,16 +75,6 @@ io.on('connection', (socket) => {
     if (typeof roomCode !== 'string' || roomCode.length > 20) return;
     socket.leave(roomCode);
     logger.debug(`${socket.id} left room ${roomCode}`);
-  });
-
-  socket.on('recording-started', (roomCode: string) => {
-    if (typeof roomCode !== 'string' || roomCode.length > 20) return;
-    socket.to(roomCode).emit('recording-started');
-  });
-
-  socket.on('recording-stopped', (roomCode: string) => {
-    if (typeof roomCode !== 'string' || roomCode.length > 20) return;
-    socket.to(roomCode).emit('recording-stopped');
   });
 
   socket.on('disconnect', () => {

@@ -61,12 +61,6 @@ export const initializeDatabase = async () => {
     // Column already exists, ignore
   }
 
-  try {
-    await db.execute(`ALTER TABLE recordings ADD COLUMN user_id TEXT DEFAULT '';`);
-  } catch (e) {
-    // Column already exists, ignore
-  }
-
   // Create meeting participants table
   await db.execute(`
     CREATE TABLE IF NOT EXISTS meeting_participants (
@@ -79,18 +73,7 @@ export const initializeDatabase = async () => {
     )
   `);
 
-  // Create recordings table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS recordings (
-      id TEXT PRIMARY KEY,
-      meeting_id TEXT NOT NULL,
-      egress_id TEXT NOT NULL,
-      status TEXT DEFAULT 'recording',
-      file_url TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
-    )
-  `);
+  // Create meeting participants table
 
   // Add Performance Indices
   const indices = [
@@ -99,8 +82,6 @@ export const initializeDatabase = async () => {
     `CREATE INDEX IF NOT EXISTS idx_meetings_scheduled ON meetings(scheduled_for);`,
     `CREATE INDEX IF NOT EXISTS idx_meetings_active ON meetings(is_active, is_deleted);`,
     `CREATE INDEX IF NOT EXISTS idx_meeting_participants_user ON meeting_participants(user_id);`,
-    `CREATE INDEX IF NOT EXISTS idx_recordings_meeting ON recordings(meeting_id);`,
-    `CREATE INDEX IF NOT EXISTS idx_recordings_egress ON recordings(egress_id);`,
   ];
   for (const q of indices) {
     await db.execute(q);
@@ -127,16 +108,6 @@ export interface Meeting {
   created_at: string;
   ended_at: string | null;
   scheduled_for: string | null;
-}
-
-export interface Recording {
-  id: string;
-  meeting_id: string;
-  user_id: string;
-  egress_id: string;
-  status: 'recording' | 'completed' | 'failed';
-  file_url: string | null;
-  created_at: string;
 }
 
 // User queries
@@ -223,51 +194,6 @@ export const meetingQueries = {
       sql: `UPDATE meetings SET is_deleted = 1 WHERE id = ? AND host_id = ?`,
       args: [id, host_id]
     });
-  },
-};
-
-// Recording queries
-export const recordingQueries = {
-  create: async (id: string, meeting_id: string, user_id: string, egress_id: string, status: string, file_url: string | null) => {
-    // Legacy support: We ignore user_id entirely and save an empty string since recordings are tied to the meeting
-    await db.execute({
-      sql: `INSERT INTO recordings (id, meeting_id, user_id, egress_id, status, file_url) VALUES (?, ?, ?, ?, ?, ?)`,
-      args: [id, meeting_id, '', egress_id, status, file_url]
-    });
-  },
-  updateStatus: async (status: string, egress_id: string) => {
-    await db.execute({
-      sql: `UPDATE recordings SET status = ? WHERE egress_id = ?`,
-      args: [status, egress_id]
-    });
-  },
-  getByMeetingId: async (meeting_id: string) => {
-    const res = await db.execute({
-      sql: `SELECT * FROM recordings WHERE meeting_id = ? ORDER BY created_at DESC`,
-      args: [meeting_id]
-    });
-    return res.rows as unknown as Recording[];
-  },
-  getAllForUser: async (user_id: string) => {
-    const res = await db.execute({
-      sql: `
-        SELECT DISTINCT r.*, m.title as meeting_title, m.created_at as meeting_date, m.host_id
-        FROM recordings r
-        JOIN meetings m ON r.meeting_id = m.id
-        LEFT JOIN meeting_participants mp ON m.id = mp.meeting_id AND mp.user_id = ?
-        WHERE m.host_id = ? OR mp.user_id = ? OR r.user_id = ?
-        ORDER BY r.created_at DESC
-      `,
-      args: [user_id, user_id, user_id, user_id]
-    });
-    return res.rows as unknown as Recording[];
-  },
-  deleteById: async (id: string) => {
-    await db.execute({ sql: `DELETE FROM recordings WHERE id = ?`, args: [id] });
-  },
-  findById: async (id: string) => {
-    const res = await db.execute({ sql: `SELECT * FROM recordings WHERE id = ?`, args: [id] });
-    return res.rows[0] as unknown as Recording | undefined;
   },
 };
 
