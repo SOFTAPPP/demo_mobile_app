@@ -621,10 +621,10 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
               </button>
               <button
                 onClick={() => {
+                  room.disconnect();
                   if (confirmAction === 'end') {
                     if (onEnd) onEnd();
                   } else {
-                    room.disconnect();
                     onLeave();
                   }
                   setConfirmAction(null);
