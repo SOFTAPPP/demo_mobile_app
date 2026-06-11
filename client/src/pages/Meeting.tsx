@@ -562,10 +562,12 @@ function BrandedMeetingUI({
     }
   };
 
+  const displayTracks = tracks.filter(t => !t.participant.identity.includes('bot-recorder') && t.participant.name !== 'Class Recorder');
+
   // Determine grid layout based on number of tracks
-  const gridClass = tracks.length <= 1 ? 'video-grid--1' :
-    tracks.length <= 2 ? 'video-grid--2' :
-      tracks.length <= 4 ? 'video-grid--4' : 'video-grid--many';
+  const gridClass = displayTracks.length <= 1 ? 'video-grid--1' :
+    displayTracks.length <= 2 ? 'video-grid--2' :
+      displayTracks.length <= 4 ? 'video-grid--4' : 'video-grid--many';
 
   const handleRecordToggle = async () => {
     try {
@@ -733,12 +735,12 @@ function BrandedMeetingUI({
           </div>
         ) : (
           <div className={`video-grid ${gridClass}`} style={{ width: '100%' }}>
-            {tracks.length === 0 ? (
+            {displayTracks.length === 0 ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', color: 'white' }}>
                 Waiting for participants...
               </div>
             ) : (
-              tracks.map((trackRef, idx) => (
+              displayTracks.map((trackRef, idx) => (
                 <ParticipantVideoTile key={trackRef.participant.identity + idx} trackRef={trackRef} />
               ))
             )}
