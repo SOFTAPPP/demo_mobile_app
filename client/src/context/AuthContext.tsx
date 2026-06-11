@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import api from '../services/api';
+import api, { saveNativeTokens, clearNativeTokens } from '../services/api';
 import type { User, AuthResponse } from '../types';
 
 interface AuthContextType {
@@ -59,18 +59,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const { data } = await api.post<AuthResponse>('/auth/login', { email, password });
+    saveNativeTokens(data.accessToken, data.refreshToken);
     sessionStorage.setItem('user', JSON.stringify(data.user));
     setUser(data.user);
   }, []);
 
   const signup = useCallback(async (name: string, email: string, password: string, role: string) => {
     const { data } = await api.post<AuthResponse>('/auth/signup', { name, email, password, role });
+    saveNativeTokens(data.accessToken, data.refreshToken);
     sessionStorage.setItem('user', JSON.stringify(data.user));
     setUser(data.user);
   }, []);
 
   const logout = useCallback(() => {
     sessionStorage.removeItem('user');
+    clearNativeTokens();
     setUser(null);
     api.post('/auth/logout').catch(() => {});
   }, []);

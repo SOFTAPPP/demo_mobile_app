@@ -66,7 +66,9 @@ router.post('/signup', authLimiter, async (req, res) => {
         res.cookie('accessToken', tokens.accessToken, cookieOptions);
         res.cookie('refreshToken', tokens.refreshToken, cookieOptions);
         res.status(201).json({
-            user: { id: userId, name, email, role: userRole, avatar_color: avatarColor }
+            user: { id: userId, name, email, role: userRole, avatar_color: avatarColor },
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
         });
     }
     catch (error) {
@@ -105,7 +107,9 @@ router.post('/login', authLimiter, async (req, res) => {
                 email: user.email,
                 role: user.role,
                 avatar_color: user.avatar_color,
-            }
+            },
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
         });
     }
     catch (error) {
@@ -150,7 +154,7 @@ router.post('/refresh', (req, res) => {
             role: decoded.role,
         });
         res.cookie('accessToken', newAccessToken, cookieOptions);
-        res.json({ success: true });
+        res.json({ success: true, accessToken: newAccessToken });
     }
     catch (error) {
         res.status(401).json({ error: 'Invalid refresh token' });

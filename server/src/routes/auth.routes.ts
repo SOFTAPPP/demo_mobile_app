@@ -75,7 +75,9 @@ router.post('/signup', authLimiter, async (req: Request, res: Response): Promise
     res.cookie('refreshToken', tokens.refreshToken, cookieOptions);
 
     res.status(201).json({
-      user: { id: userId, name, email, role: userRole, avatar_color: avatarColor }
+      user: { id: userId, name, email, role: userRole, avatar_color: avatarColor },
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
     });
   } catch (error) {
     logger.error('Signup error', { error });
@@ -119,7 +121,9 @@ router.post('/login', authLimiter, async (req: Request, res: Response): Promise<
         email: user.email,
         role: user.role,
         avatar_color: user.avatar_color,
-      }
+      },
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
     });
   } catch (error) {
     logger.error('Login error', { error });
@@ -169,7 +173,7 @@ router.post('/refresh', (req: Request, res: Response): void => {
 
     res.cookie('accessToken', newAccessToken, cookieOptions);
 
-    res.json({ success: true });
+    res.json({ success: true, accessToken: newAccessToken });
   } catch (error) {
     res.status(401).json({ error: 'Invalid refresh token' });
   }
