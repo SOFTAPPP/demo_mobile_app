@@ -49,15 +49,6 @@ router.post('/create', async (req: AuthRequest, res: Response): Promise<void> =>
     const meetingId = uuidv4();
     let roomCode = generateRoomCode();
 
-    let attempts = 0;
-    let existing = await meetingQueries.findByCode(roomCode);
-    while (existing && attempts < 5) {
-      roomCode = generateRoomCode();
-      existing = await meetingQueries.findByCode(roomCode);
-      attempts++;
-    }
-
-    await meetingQueries.create(meetingId, roomCode, meetingTitle, req.user!.userId, 100);
 
     const token = await livekitService.generateToken(
       roomCode,
@@ -81,6 +72,18 @@ router.post('/create', async (req: AuthRequest, res: Response): Promise<void> =>
         url: livekitService.getServerUrl(),
         configured: livekitService.isConfigured(),
       },
+    });
+
+    // Background DB Insertion (Optimistic Response)
+    setImmediate(() => {
+      meetingQueries.create(meetingId, roomCode, meetingTitle, req.user!.userId, 100)
+        .catch(err => {
+          if (err.message && (err.message.includes('UNIQUE constraint') || err.message.includes('SQLITE_CONSTRAINT'))) {
+            logger.warn(`Collision detected for background meeting creation, roomCode: ${roomCode}`);
+          } else {
+            logger.error('Background meeting insert failed', { error: err.message });
+          }
+        });
     });
   } catch (error) {
     logger.error('Create meeting error', { error });

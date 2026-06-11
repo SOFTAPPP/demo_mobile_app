@@ -112,7 +112,7 @@ export default function Meeting() {
 
     const socket = getSocket();
 
-    socket.emit('join-room', roomCode);
+    socket.emit('join-room', { roomCode, isHost });
 
     const onMeetingEnded = () => {
       if (isLeavingManually.current) return;
@@ -124,9 +124,9 @@ export default function Meeting() {
 
     return () => {
       socket.off('meeting-ended', onMeetingEnded);
-      socket.emit('leave-room', roomCode);
+      socket.emit('leave-room', { roomCode, isHost });
     };
-  }, [roomCode, navigate]);
+  }, [roomCode, isHost, navigate]);
 
   useEffect(() => {
     if (!location.state?.livekit && roomCode) {
