@@ -323,6 +323,14 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
     };
   }, [room]);
 
+  useEffect(() => {
+    if (connectionState !== 'connected') return;
+    const interval = setInterval(() => {
+      setElapsed(prev => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [connectionState]);
+
   const [confirmAction, setConfirmAction] = useState<'leave' | 'end' | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
@@ -406,6 +414,15 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
     displayTracks.length <= 2 ? 'video-grid--2' :
       displayTracks.length <= 4 ? 'video-grid--4' : 'video-grid--many';
 
+
+  if (connectionState === 'disconnected') {
+    return (
+      <div style={{ height: '100dvh', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--color-bg)' }}>
+        <span className="loader" style={{ display: 'inline-block', marginRight: '16px' }} />
+        <span style={{ color: 'white', fontSize: '1.2rem', fontWeight: 500 }}>Leaving room...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="meeting-room" style={{ height: '100dvh', width: '100%' }}>
