@@ -540,41 +540,48 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
         const socket = getSocket();
         socket.emit('recording-stopped', roomCode);
 
-        await api.post('/meetings/record/stop', { egressId, roomCode });
+        api.post('/meetings/record/stop', { egressId, roomCode }).catch(() => {});
       } else {
-        let totalTracks = 0;
-        room.remoteParticipants.forEach((p) => { totalTracks += p.trackPublications.size; });
-        totalTracks += room.localParticipant.trackPublications.size;
-
-        if (totalTracks === 0) {
-          try {
-            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-            const oscillator = ctx.createOscillator();
-            const gainNode = ctx.createGain();
-            gainNode.gain.value = 0;
-            const dst = ctx.createMediaStreamDestination();
-            oscillator.connect(gainNode);
-            gainNode.connect(dst);
-            oscillator.start();
-
-            const track = dst.stream.getAudioTracks()[0];
-            const dummyTrack = new LocalAudioTrack(track);
-            await room.localParticipant.publishTrack(dummyTrack, { name: 'silence', source: Track.Source.Unknown });
-
-            setTimeout(() => {
-              room.localParticipant.unpublishTrack(dummyTrack).catch(() => {});
-            }, 10000);
-          } catch {}
-        }
-
         if (onOptimisticStart) onOptimisticStart('temp_id_loading');
 
         const socket = getSocket();
         socket.emit('recording-started', roomCode);
 
+        // Async dummy track publishing to avoid blocking the UI
+        let totalTracks = 0;
+        room.remoteParticipants.forEach((p) => { totalTracks += p.trackPublications.size; });
+        totalTracks += room.localParticipant.trackPublications.size;
+
+        if (totalTracks === 0) {
+          (async () => {
+            try {
+              const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+              const oscillator = ctx.createOscillator();
+              const gainNode = ctx.createGain();
+              gainNode.gain.value = 0;
+              const dst = ctx.createMediaStreamDestination();
+              oscillator.connect(gainNode);
+              gainNode.connect(dst);
+              oscillator.start();
+
+              const track = dst.stream.getAudioTracks()[0];
+              const dummyTrack = new LocalAudioTrack(track);
+              await room.localParticipant.publishTrack(dummyTrack, { name: 'silence', source: Track.Source.Unknown });
+
+              setTimeout(() => {
+                room.localParticipant.unpublishTrack(dummyTrack).catch(() => {});
+              }, 10000);
+            } catch {}
+          })();
+        }
+
+        const fallbackUrl = 'https://demo-mobile-app-liart.vercel.app';
+        const currentUrl = window.location.origin;
+        const finalUrl = currentUrl.includes('localhost') ? fallbackUrl : currentUrl;
+
         const { data } = await api.post('/meetings/record/start', {
           roomCode,
-          publicUrl: window.location.origin
+          publicUrl: finalUrl
         });
         if (onOptimisticStart) onOptimisticStart(data.egressId);
       }

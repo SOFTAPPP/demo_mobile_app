@@ -308,7 +308,12 @@ router.post('/record/start', async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    const { egressId, fileUrl } = await livekitService.startRecording(roomCode, publicUrl);
+    let finalPublicUrl = publicUrl;
+    if (publicUrl.includes('localhost') || !publicUrl.startsWith('http')) {
+      finalPublicUrl = process.env.CLIENT_URL || 'https://demo-mobile-app-liart.vercel.app';
+    }
+
+    const { egressId, fileUrl } = await livekitService.startRecording(roomCode, finalPublicUrl);
 
     const recordingId = uuidv4();
     await recordingQueries.create(
