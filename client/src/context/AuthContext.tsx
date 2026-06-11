@@ -20,6 +20,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Check for existing session on mount
   useEffect(() => {
     const checkAuth = async () => {
+      // Check for botToken in URL (for LiveKit WebEgress recorder)
+      const searchParams = new URLSearchParams(window.location.search);
+      const botToken = searchParams.get('botToken');
+      
+      if (botToken) {
+        const mockBotUser: User = {
+          id: 'bot',
+          name: 'Recorder',
+          email: 'bot@system.local',
+          role: 'student',
+          avatar_color: '#000000'
+        };
+        setUser(mockBotUser);
+        setIsLoading(false);
+        return;
+      }
+
       const storedUser = sessionStorage.getItem('user');
 
       if (storedUser) {

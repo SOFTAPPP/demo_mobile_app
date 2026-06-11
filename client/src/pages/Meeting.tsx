@@ -191,7 +191,19 @@ export default function Meeting() {
 
   useEffect(() => {
     if (!location.state?.livekit && roomCode) {
-      fetchMeetingToken(roomCode);
+      const searchParams = new URLSearchParams(window.location.search);
+      const botToken = searchParams.get('botToken');
+      const lkUrl = searchParams.get('lkUrl');
+
+      if (botToken && lkUrl) {
+        setLivekitToken(botToken);
+        setLivekitUrl(lkUrl);
+        setMeetingTitle('Class Recording');
+        setIsHost(false);
+        setIsConnecting(false);
+      } else {
+        fetchMeetingToken(roomCode);
+      }
     }
   }, [roomCode, location.state]);
 
@@ -609,7 +621,10 @@ function BrandedMeetingUI({
         tempSocket.emit('recording-started', roomCode);
         tempSocket.disconnect();
 
-        const { data } = await api.post('/meetings/record/start', { roomCode });
+        const { data } = await api.post('/meetings/record/start', { 
+          roomCode,
+          publicUrl: import.meta.env.VITE_API_URL || window.location.origin 
+        });
         // Update with real ID once we have it
         if (onOptimisticStart) onOptimisticStart(data.egressId);
       }

@@ -14,9 +14,9 @@ export declare const livekitService: {
      */
     endRoom(roomName: string): Promise<void>;
     /**
-     * Start recording a LiveKit room and upload directly to Cloudflare R2
+     * Start recording a room via WebEgress
      */
-    startRecording(roomName: string): Promise<{
+    startRecording(roomName: string, publicUrl: string): Promise<{
         egressId: string;
         fileUrl: string;
     }>;

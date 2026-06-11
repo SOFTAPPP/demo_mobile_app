@@ -317,9 +317,9 @@ router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => 
  */
 router.post('/record/start', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { roomCode } = req.body;
-    if (!roomCode) {
-      res.status(400).json({ error: 'Room code is required' });
+    const { roomCode, publicUrl } = req.body;
+    if (!roomCode || !publicUrl) {
+      res.status(400).json({ error: 'Room code and publicUrl are required' });
       return;
     }
 
@@ -329,7 +329,7 @@ router.post('/record/start', async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    const { egressId, fileUrl } = await livekitService.startRecording(roomCode);
+    const { egressId, fileUrl } = await livekitService.startRecording(roomCode, publicUrl);
     
     // Save recording to DB
     const recordingId = uuidv4();

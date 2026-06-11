@@ -316,9 +316,9 @@ router.delete('/:id', async (req, res) => {
  */
 router.post('/record/start', async (req, res) => {
     try {
-        const { roomCode } = req.body;
-        if (!roomCode) {
-            res.status(400).json({ error: 'Room code is required' });
+        const { roomCode, publicUrl } = req.body;
+        if (!roomCode || !publicUrl) {
+            res.status(400).json({ error: 'Room code and publicUrl are required' });
             return;
         }
         const meeting = await db_1.meetingQueries.findByCode(roomCode);
@@ -326,7 +326,7 @@ router.post('/record/start', async (req, res) => {
             res.status(404).json({ error: 'Meeting not found' });
             return;
         }
-        const { egressId, fileUrl } = await livekit_service_1.livekitService.startRecording(roomCode);
+        const { egressId, fileUrl } = await livekit_service_1.livekitService.startRecording(roomCode, publicUrl);
         // Save recording to DB
         const recordingId = (0, uuid_1.v4)();
         await db_1.recordingQueries.create(recordingId, meeting.id, req.user.userId, egressId, 'recording', fileUrl);

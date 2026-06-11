@@ -83,10 +83,13 @@ export const livekitService = {
   },
 
   /**
-   * Start recording a LiveKit room and upload directly to Cloudflare R2
+   * Start recording a room via WebEgress
    */
-  async startRecording(roomName: string): Promise<{ egressId: string; fileUrl: string }> {
-    if (!this.isConfigured()) throw new Error('LiveKit is not configured');
+  async startRecording(roomName: string, publicUrl: string): Promise<{ egressId: string, fileUrl: string }> {
+    if (!this.isConfigured()) {
+      throw new Error('LiveKit is not configured');
+    }
+
     if (!process.env.S3_ACCESS_KEY || !process.env.S3_SECRET_KEY || !process.env.S3_ENDPOINT || !process.env.S3_BUCKET) {
       throw new Error('Cloudflare R2 credentials are not fully configured in .env');
     }
@@ -111,12 +114,22 @@ export const livekitService = {
       output: { case: 's3', value: s3Upload },
     });
 
-    const info = await egressClient.startRoomCompositeEgress(roomName, {
+    // Generate a secure LiveKit token specifically for the bot to join the room
+    const botLiveKitToken = await this.generateToken(roomName, "Class Recorder", "bot-recorder", false);
+    
+    // The LiveKit server URL that the frontend needs to connect to
+    const lkUrl = this.getServerUrl();
+
+    // Construct the WebEgress URL with the secure bot token
+    const egressUrl = `${publicUrl}/meeting/${roomName}?botToken=${botLiveKitToken}&lkUrl=${encodeURIComponent(lkUrl)}`;
+
+    // Start WebEgress instead of RoomCompositeEgress
+    const info = await egressClient.startWebEgress(egressUrl, {
       file: fileOutput,
     });
 
-    const publicUrl = process.env.S3_PUBLIC_URL || '';
-    const fileUrl = publicUrl ? `${publicUrl}/${fileName}` : fileName;
+    const publicS3Url = process.env.S3_PUBLIC_URL || '';
+    const fileUrl = publicS3Url ? `${publicS3Url}/${fileName}` : fileName;
 
     return { egressId: info.egressId as string, fileUrl };
   },
