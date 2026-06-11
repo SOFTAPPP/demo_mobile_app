@@ -134,6 +134,7 @@ exports.livekitService = {
         const lkUrl = this.getServerUrl();
         // Construct the WebEgress URL with the secure bot token
         const egressUrl = `${publicUrl}/meeting/${roomName}?botToken=${botLiveKitToken}&lkUrl=${encodeURIComponent(lkUrl)}`;
+        console.log('[Egress] Attempting to start WebEgress for URL:', egressUrl);
         // Start WebEgress instead of RoomCompositeEgress
         const info = await egressClient.startWebEgress(egressUrl, {
             file: fileOutput,
