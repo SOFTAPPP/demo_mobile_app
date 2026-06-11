@@ -338,9 +338,9 @@
   position: relative;
   border-radius: 16px;
   overflow: hidden;
-  background: var(--m-card);
+  background: #3C4043;
   box-shadow: 0 4px 24px var(--m-shadow);
-  border: 4px solid var(--m-video-border);
+  border: 2px solid transparent;
   transition: border-color 0.2s ease, background 0.3s ease;
   width: 100%;
   height: 100%;
@@ -362,22 +362,22 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--m-control);
+  background: #3C4043; /* Dark sleek background like Google Meet */
   border-radius: 16px;
 }
 
 .video-tile__avatar {
-  width: 80px;
-  height: 80px;
+  width: 140px;
+  height: 140px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2rem;
-  font-weight: 700;
-  color: var(--m-text);
+  font-size: 3.5rem;
+  font-weight: 500;
+  color: #FFFFFF;
   background: var(--m-card);
-  box-shadow: 0 4px 12px var(--m-shadow);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
 .video-tile__name {
@@ -462,6 +462,26 @@
 .control-btn--active {
   background: var(--m-text);
   color: var(--m-card);
+}
+
+.control-btn--active-green {
+  background: #10B981;
+  color: #FFFFFF;
+}
+
+.control-btn--active-blue {
+  background: #3B82F6;
+  color: #FFFFFF;
+}
+
+.control-btn--active-orange {
+  background: #F59E0B;
+  color: #FFFFFF;
+}
+
+.control-btn--active-red {
+  background: #EF4444;
+  color: #FFFFFF;
 }
 
 .control-btn--off {
@@ -873,4 +893,54 @@
 @keyframes fade-text {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
+}
+
+/* Custom Recording Button states & Pulsing icon */
+.control-btn--recording {
+  min-width: 130px;
+  background: #EF4444 !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+}
+
+.pulse-icon {
+  animation: pulse-icon-anim 1.5s infinite alternate ease-in-out;
+}
+
+@keyframes pulse-icon-anim {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  100% { transform: scale(1.15); opacity: 1; }
+}
+
+/* Toast notifications with beautiful glassmorphism */
+.toast-notification {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  border-radius: 30px;
+  color: #FFFFFF !important;
+  font-weight: 600;
+  font-size: 0.95rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+  pointer-events: none;
+}
+
+.toast-notification--success {
+  background: rgba(16, 185, 129, 0.25) !important;
+  border-color: rgba(16, 185, 129, 0.4) !important;
+}
+
+.toast-notification--info {
+  background: rgba(59, 130, 246, 0.25) !important;
+  border-color: rgba(59, 130, 246, 0.4) !important;
+}
+
+.toast-notification--error {
+  background: rgba(239, 68, 68, 0.25) !important;
+  border-color: rgba(239, 68, 68, 0.4) !important;
 }

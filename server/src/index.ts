@@ -13,6 +13,9 @@ import { initializeDatabase, meetingQueries } from './models/db';
 import { livekitService } from './services/livekit.service';
 import authRoutes from './routes/auth.routes';
 import meetingRoutes from './routes/meeting.routes';
+import recordingRoutes from './routes/recording.routes';
+import { recordingQueries } from './models/db';
+import { s3Service } from './services/s3.service';
 
 const app = express();
 const server = http.createServer(app);
@@ -63,13 +66,48 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/meetings', meetingRoutes);
+app.use('/api/recordings', recordingRoutes);
 
 const hostDisconnectTimers = new Map<string, NodeJS.Timeout>();
+
+const socketRateLimits = new Map<string, { count: number; resetAt: number }>();
+const SOCKET_RATE_WINDOW = 5000;
+const SOCKET_RATE_MAX = 30;
+
+function checkSocketRate(socketId: string): boolean {
+  const now = Date.now();
+  const entry = socketRateLimits.get(socketId);
+  if (!entry || now > entry.resetAt) {
+    socketRateLimits.set(socketId, { count: 1, resetAt: now + SOCKET_RATE_WINDOW });
+    return true;
+  }
+  if (entry.count >= SOCKET_RATE_MAX) return false;
+  entry.count++;
+  return true;
+}
+
+const SOCKET_EVENTS = {
+  JOIN_ROOM: 'join-room',
+  LEAVE_ROOM: 'leave-room',
+  MEETING_ENDED: 'meeting-ended',
+  MEETING_ENDED_GLOBAL: 'meeting-ended-global',
+  RECORDING_START: 'recording:start',
+  RECORDING_STOP: 'recording:stop',
+  RECORDING_STARTED: 'recording:started',
+  RECORDING_STOPPED: 'recording:stopped',
+} as const;
 
 io.on('connection', (socket) => {
   logger.debug(`Socket connected: ${socket.id}`);
 
-  socket.on('join-room', (payload: any) => {
+  socket.use(([event], next) => {
+    if (!checkSocketRate(socket.id)) {
+      return next(new Error('Rate limit exceeded'));
+    }
+    next();
+  });
+
+  socket.on(SOCKET_EVENTS.JOIN_ROOM, (payload: any) => {
     // Fallback for older clients sending just a string
     const roomCode = typeof payload === 'string' ? payload : payload?.roomCode;
     const isHost = typeof payload === 'object' ? payload?.isHost : false;
@@ -97,10 +135,29 @@ io.on('connection', (socket) => {
     
     const timer = setTimeout(async () => {
       try {
+        const meeting = await meetingQueries.findByCode(roomCode);
+        if (meeting) {
+          const ongoingRecordings = await recordingQueries.getOngoingRecordingsForMeeting(meeting.id);
+          for (const rec of ongoingRecordings) {
+            try {
+              const parts = JSON.parse(rec.parts_json || '[]');
+              if (parts.length > 0 && rec.upload_id) {
+                await s3Service.completeMultipartUpload(rec.storage_key, rec.upload_id, parts);
+                await recordingQueries.finalizeRecording(rec.id, 'saved', 0, 0);
+              } else if (rec.upload_id) {
+                await s3Service.abortMultipartUpload(rec.storage_key, rec.upload_id);
+                await recordingQueries.finalizeRecording(rec.id, 'failed', 0, 0);
+              }
+            } catch (e) {
+              logger.error('Failed to auto-finalize recording', e);
+            }
+          }
+        }
+
         await meetingQueries.endMeeting(roomCode);
         livekitService.endRoom(roomCode);
-        io.to(roomCode).emit('meeting-ended');
-        io.emit('meeting-ended-global', roomCode);
+        io.to(roomCode).emit(SOCKET_EVENTS.MEETING_ENDED);
+        io.emit(SOCKET_EVENTS.MEETING_ENDED_GLOBAL, roomCode);
         hostDisconnectTimers.delete(roomCode);
         logger.info(`Meeting ${roomCode} auto-ended due to 10-minute host absence.`);
       } catch (err) {
@@ -111,7 +168,17 @@ io.on('connection', (socket) => {
     hostDisconnectTimers.set(roomCode, timer);
   };
 
-  socket.on('leave-room', (payload: any) => {
+  socket.on(SOCKET_EVENTS.RECORDING_START, (payload) => {
+    const roomCode = typeof payload === 'string' ? payload : payload?.roomCode;
+    io.to(roomCode).emit(SOCKET_EVENTS.RECORDING_STARTED);
+  });
+
+  socket.on(SOCKET_EVENTS.RECORDING_STOP, (payload) => {
+    const roomCode = typeof payload === 'string' ? payload : payload?.roomCode;
+    io.to(roomCode).emit(SOCKET_EVENTS.RECORDING_STOPPED);
+  });
+
+  socket.on(SOCKET_EVENTS.LEAVE_ROOM, (payload: any) => {
     const roomCode = typeof payload === 'string' ? payload : payload?.roomCode;
     if (typeof roomCode !== 'string' || roomCode.length > 20) return;
     

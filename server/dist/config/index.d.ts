@@ -11,5 +11,6 @@ export declare const config: {
     };
     corsOrigins: string[];
     isProduction: boolean;
+    isLocalhost: boolean;
 };
 //# sourceMappingURL=index.d.ts.map

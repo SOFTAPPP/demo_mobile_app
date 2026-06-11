@@ -21,13 +21,26 @@ export interface Meeting {
     ended_at: string | null;
     scheduled_for: string | null;
 }
+export interface MeetingParticipant {
+    meeting_id: string;
+    user_id: string;
+    joined_at: string;
+}
 export interface Recording {
     id: string;
     meeting_id: string;
     user_id: string;
     egress_id: string;
-    status: 'recording' | 'completed' | 'failed';
-    file_url: string | null;
+    status: 'recording' | 'processing' | 'saved' | 'failed';
+    storage_provider: string;
+    storage_key: string;
+    upload_id?: string;
+    parts_json: string;
+    file_size: number;
+    duration: number;
+    mime_type?: string;
+    started_at: string;
+    ended_at?: string;
     created_at: string;
 }
 export declare const userQueries: {
@@ -49,12 +62,17 @@ export declare const meetingQueries: {
     deleteMeeting: (id: string, host_id: string) => Promise<void>;
 };
 export declare const recordingQueries: {
-    create: (id: string, meeting_id: string, user_id: string, egress_id: string, status: string, file_url: string | null) => Promise<void>;
-    updateStatus: (status: string, egress_id: string) => Promise<void>;
-    getByMeetingId: (meeting_id: string) => Promise<Recording[]>;
-    getAllForUser: (user_id: string) => Promise<Recording[]>;
-    deleteById: (id: string) => Promise<void>;
-    findById: (id: string) => Promise<Recording | undefined>;
+    createRecording(recording: Omit<Recording, "created_at" | "started_at" | "file_size" | "duration" | "parts_json" | "status">): Promise<void>;
+    getRecordingById(id: string): Promise<Recording | null>;
+    getRecordingsByMeetingId(meetingId: string): Promise<Recording[]>;
+    updateRecordingParts(id: string, partsJson: string): Promise<void>;
+    finalizeRecording(id: string, status: Recording["status"], duration: number, fileSize: number): Promise<void>;
+    getOngoingRecordingsForMeeting(meetingId: string): Promise<Recording[]>;
+    getRecordingsByUserId(userId: string): Promise<(Recording & {
+        meeting_title: string;
+        meeting_room_code: string;
+    })[]>;
+    deleteRecording(id: string, userId: string): Promise<boolean>;
 };
 export default db;
 //# sourceMappingURL=db.d.ts.map

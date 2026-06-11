@@ -1,8 +1,13 @@
 import axios from 'axios';
 import { Capacitor } from '@capacitor/core';
 
-// Detect if running inside Capacitor native app
 const isNative = Capacitor.isNativePlatform();
+
+function navigateTo(path: string) {
+  if (typeof window !== 'undefined') {
+    window.location.href = path;
+  }
+}
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
@@ -74,7 +79,7 @@ api.interceptors.response.use(
           localStorage.removeItem('refreshToken');
         }
         if (window.location.pathname !== '/login') {
-          window.location.href = '/login';
+          navigateTo('/login');
         }
         return Promise.reject(error);
       }

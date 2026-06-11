@@ -1,20 +1,34 @@
 import { Router, Response } from 'express';
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import db, { meetingQueries } from '../models/db';
 import { livekitService } from '../services/livekit.service';
-import { authMiddleware, AuthRequest } from '../middleware/auth.middleware';
+import { authMiddleware, requireRole, AuthRequest } from '../middleware/auth.middleware';
+import { sanitizeBody } from '../middleware/validate';
 import { logger } from '../lib/logger';
 
 const router = Router();
 
 router.use(authMiddleware);
+router.use(sanitizeBody);
 
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.randomBytes(8);
+  let code = '';
+  for (let i = 0; i < 8; i++) {
+    code += chars.charAt(bytes[i] % chars.length);
+  }
+  return code;
+}
+
+function generateShortRoomCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.randomBytes(6);
   let code = '';
   for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
+    code += chars.charAt(bytes[i] % chars.length);
   }
   return code;
 }
@@ -37,18 +51,31 @@ const endSchema = z.object({
   roomCode: z.string().min(1).max(10),
 });
 
-router.post('/create', async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/create', requireRole('teacher'), async (req: AuthRequest, res: Response): Promise<void> => {
   const startTime = Date.now();
   try {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.issues[0].message });
+      res.status(400).json({ error: parsed.error.issues[0].message, code: 'VALIDATION_ERROR' });
       return;
     }
     const meetingTitle = parsed.data.title || 'Music Class';
     const meetingId = uuidv4();
-    let roomCode = generateRoomCode();
+    let roomCode = generateShortRoomCode();
 
+    let attempts = 0;
+    let existing = await meetingQueries.findByCode(roomCode);
+    while (existing && attempts < 5) {
+      roomCode = generateShortRoomCode();
+      existing = await meetingQueries.findByCode(roomCode);
+      attempts++;
+    }
+    if (existing) {
+      res.status(500).json({ error: 'Failed to generate unique room code. Please try again.', code: 'ROOM_CODE_COLLISION' });
+      return;
+    }
+
+    await meetingQueries.create(meetingId, roomCode, meetingTitle, req.user!.userId, 100);
 
     const token = await livekitService.generateToken(
       roomCode,
@@ -61,37 +88,28 @@ router.post('/create', async (req: AuthRequest, res: Response): Promise<void> =>
     logger.info(`[API] POST /meetings/create took ${endTime - startTime}ms`);
 
     res.status(201).json({
-      meeting: {
-        id: meetingId,
-        room_code: roomCode,
-        title: meetingTitle,
-        is_active: true,
+      success: true,
+      data: {
+        meeting: {
+          id: meetingId,
+          room_code: roomCode,
+          title: meetingTitle,
+          is_active: true,
+        },
+        livekit: {
+          token,
+          url: livekitService.getServerUrl(),
+          configured: livekitService.isConfigured(),
+        },
       },
-      livekit: {
-        token,
-        url: livekitService.getServerUrl(),
-        configured: livekitService.isConfigured(),
-      },
-    });
-
-    // Background DB Insertion (Optimistic Response)
-    setImmediate(() => {
-      meetingQueries.create(meetingId, roomCode, meetingTitle, req.user!.userId, 100)
-        .catch(err => {
-          if (err.message && (err.message.includes('UNIQUE constraint') || err.message.includes('SQLITE_CONSTRAINT'))) {
-            logger.warn(`Collision detected for background meeting creation, roomCode: ${roomCode}`);
-          } else {
-            logger.error('Background meeting insert failed', { error: err.message });
-          }
-        });
     });
   } catch (error) {
     logger.error('Create meeting error', { error });
-    res.status(500).json({ error: 'Failed to create meeting' });
+    res.status(500).json({ error: 'Failed to create meeting', code: 'SERVER_ERROR' });
   }
 });
 
-router.post('/schedule', async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/schedule', requireRole('teacher'), async (req: AuthRequest, res: Response): Promise<void> => {
   const startTime = Date.now();
   try {
     const parsed = scheduleSchema.safeParse(req.body);
@@ -119,13 +137,16 @@ router.post('/schedule', async (req: AuthRequest, res: Response): Promise<void> 
     logger.info(`[API] POST /meetings/schedule took ${endTime - startTime}ms`);
 
     res.status(201).json({
-      meeting: {
-        id: meetingId,
-        room_code: roomCode,
-        title: meetingTitle,
-        is_active: true,
-        scheduled_for: scheduledFor
-      }
+      success: true,
+      data: {
+        meeting: {
+          id: meetingId,
+          room_code: roomCode,
+          title: meetingTitle,
+          is_active: true,
+          scheduled_for: scheduledFor
+        }
+      },
     });
   } catch (error) {
     logger.error('Schedule meeting error', { error });
@@ -173,21 +194,41 @@ router.post('/join', async (req: AuthRequest, res: Response): Promise<void> => {
       logger.error('Failed to record meeting participant', { error: dbError });
     }
 
+    let isRecording = false;
+    let recordingElapsed = 0;
+    try {
+      const ongoingRecordings = await db.execute({
+        sql: `SELECT (strftime('%s', 'now') - strftime('%s', started_at)) as elapsed FROM recordings WHERE meeting_id = ? AND status = 'recording'`,
+        args: [meeting.id]
+      });
+      if (ongoingRecordings.rows.length > 0) {
+        isRecording = true;
+        recordingElapsed = Math.max(0, Number(ongoingRecordings.rows[0].elapsed || 0));
+      }
+    } catch (recError) {
+      logger.error('Failed to query ongoing recordings on join', { error: recError });
+    }
+
     const endTime = Date.now();
     logger.info(`[API] POST /meetings/join took ${endTime - startTime}ms`);
 
     res.json({
-      meeting: {
-        id: meeting.id,
-        room_code: meeting.room_code,
-        title: meeting.title,
-        is_active: true,
-      },
-      isHost: isTeacher,
-      livekit: {
-        token,
-        url: livekitService.getServerUrl(),
-        configured: livekitService.isConfigured(),
+      success: true,
+      data: {
+        meeting: {
+          id: meeting.id,
+          room_code: meeting.room_code,
+          title: meeting.title,
+          is_active: true,
+          isRecording,
+          recordingElapsed,
+        },
+        isHost: isTeacher,
+        livekit: {
+          token,
+          url: livekitService.getServerUrl(),
+          configured: livekitService.isConfigured(),
+        },
       },
     });
   } catch (error) {
@@ -196,7 +237,7 @@ router.post('/join', async (req: AuthRequest, res: Response): Promise<void> => {
   }
 });
 
-router.post('/end', async (req: AuthRequest, res: Response): Promise<void> => {
+router.post('/end', requireRole('teacher'), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const parsed = endSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -234,20 +275,20 @@ router.post('/end', async (req: AuthRequest, res: Response): Promise<void> => {
 router.get('/recent', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const meetings = await meetingQueries.getRecent(req.user!.userId, req.user!.userId);
-    res.json({ meetings });
+    res.json({ success: true, data: { meetings } });
   } catch (error) {
     logger.error('Get recent meetings error', { error });
-    res.status(500).json({ error: 'Failed to get meetings' });
+    res.status(500).json({ error: 'Failed to get meetings', code: 'SERVER_ERROR' });
   }
 });
 
 router.get('/scheduled', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const meetings = await meetingQueries.getScheduled(req.user!.userId);
-    res.json({ meetings });
+    res.json({ success: true, data: { meetings } });
   } catch (error) {
     logger.error('Get scheduled meetings error', { error });
-    res.status(500).json({ error: 'Failed to get scheduled meetings' });
+    res.status(500).json({ error: 'Failed to get scheduled meetings', code: 'SERVER_ERROR' });
   }
 });
 

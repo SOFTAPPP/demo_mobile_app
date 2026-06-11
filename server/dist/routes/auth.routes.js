@@ -11,6 +11,7 @@ const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const db_1 = require("../models/db");
 const jwt_service_1 = require("../services/jwt.service");
 const auth_middleware_1 = require("../middleware/auth.middleware");
+const validate_1 = require("../middleware/validate");
 const logger_1 = require("../lib/logger");
 const config_1 = require("../config");
 const router = (0, express_1.Router)();
@@ -40,7 +41,7 @@ const AVATAR_COLORS = [
     '#7B2D26', '#8B4513', '#D4722A', '#B8860B', '#2D5F2D',
     '#4A1A2E', '#6B3A5E', '#1B5E20', '#C4932A', '#A0522D',
 ];
-router.post('/signup', authLimiter, async (req, res) => {
+router.post('/signup', authLimiter, validate_1.sanitizeBody, async (req, res) => {
     try {
         const parsedBody = signupSchema.safeParse(req.body);
         if (!parsedBody.success) {
@@ -53,7 +54,7 @@ router.post('/signup', authLimiter, async (req, res) => {
             res.status(409).json({ error: 'Email already registered' });
             return;
         }
-        const salt = await bcryptjs_1.default.genSalt(10);
+        const salt = await bcryptjs_1.default.genSalt(12);
         const passwordHash = await bcryptjs_1.default.hash(password, salt);
         const userId = (0, uuid_1.v4)();
         const avatarColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
@@ -76,7 +77,7 @@ router.post('/signup', authLimiter, async (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 });
-router.post('/login', authLimiter, async (req, res) => {
+router.post('/login', authLimiter, validate_1.sanitizeBody, async (req, res) => {
     try {
         const parsedBody = loginSchema.safeParse(req.body);
         if (!parsedBody.success) {

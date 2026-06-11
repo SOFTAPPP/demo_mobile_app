@@ -1,5 +1,5 @@
 {
-  "name": "sangeet-arghya-server",
+  "name": "sangeetarghya-server",
   "version": "1.0.0",
   "description": "Backend server for Sangeet Arghya Meeting App",
   "main": "dist/index.js",
@@ -12,6 +12,8 @@
     "restart:prod": "pm2 restart sangeet-arghya-server"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1066.0",
+    "@aws-sdk/s3-request-presigner": "^3.1066.0",
     "@libsql/client": "^0.17.3",
     "bcryptjs": "^2.4.3",
     "compression": "^1.8.1",

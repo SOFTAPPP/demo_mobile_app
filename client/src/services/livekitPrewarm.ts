@@ -10,6 +10,7 @@ export const roomOptions: RoomOptions = {
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,
+    channelCount: 2,
   },
   publishDefaults: {
     simulcast: true,
@@ -20,7 +21,7 @@ export const roomOptions: RoomOptions = {
       maxFramerate: 60,
     },
     audioPreset: {
-      maxBitrate: 256_000,
+      maxBitrate: 510_000,
     },
   },
 };

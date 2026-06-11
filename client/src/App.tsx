@@ -1,10 +1,15 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import './styles/index.css';
+
+// Register service worker for offline caching
+if ('serviceWorker' in navigator && !window.location.hostname.includes('localhost')) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
 
 // Lazy load heavy components
 const Dashboard = lazy(() => import('./pages/Dashboard'));

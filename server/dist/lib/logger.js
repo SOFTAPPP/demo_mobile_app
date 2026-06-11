@@ -23,15 +23,13 @@ exports.logger = winston_1.default.createLogger({
         new winston_1.default.transports.File({ filename: path_1.default.join(logDir, 'combined.log') }),
     ],
 });
-// If we're not in production then log to the `console` with a simpler format
-if (process.env.NODE_ENV !== 'production') {
-    exports.logger.add(new winston_1.default.transports.Console({
-        format: winston_1.default.format.combine(winston_1.default.format.colorize(), winston_1.default.format.printf(({ level, message, timestamp, stack }) => {
-            if (stack) {
-                return `[${timestamp}] ${level}: ${message}\n${stack}`;
-            }
-            return `[${timestamp}] ${level}: ${message}`;
-        })),
-    }));
-}
+// Log to the console in all environments so Render can display them
+exports.logger.add(new winston_1.default.transports.Console({
+    format: winston_1.default.format.combine(process.env.NODE_ENV === 'production' ? winston_1.default.format.uncolorize() : winston_1.default.format.colorize(), winston_1.default.format.printf(({ level, message, timestamp, stack }) => {
+        if (stack) {
+            return `[${timestamp}] ${level}: ${message}\n${stack}`;
+        }
+        return `[${timestamp}] ${level}: ${message}`;
+    })),
+}));
 //# sourceMappingURL=logger.js.map

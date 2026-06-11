@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import { userQueries } from '../models/db';
 import { jwtService } from '../services/jwt.service';
 import { authMiddleware, AuthRequest } from '../middleware/auth.middleware';
+import { sanitizeBody } from '../middleware/validate';
 import { logger } from '../lib/logger';
 import { config } from '../config';
 
@@ -42,7 +43,7 @@ const AVATAR_COLORS = [
   '#4A1A2E', '#6B3A5E', '#1B5E20', '#C4932A', '#A0522D',
 ];
 
-router.post('/signup', authLimiter, async (req: Request, res: Response): Promise<void> => {
+router.post('/signup', authLimiter, sanitizeBody, async (req: Request, res: Response): Promise<void> => {
   try {
     const parsedBody = signupSchema.safeParse(req.body);
     if (!parsedBody.success) {
@@ -57,7 +58,7 @@ router.post('/signup', authLimiter, async (req: Request, res: Response): Promise
       return;
     }
 
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(12);
     const passwordHash = await bcrypt.hash(password, salt);
 
     const userId = uuidv4();
@@ -85,7 +86,7 @@ router.post('/signup', authLimiter, async (req: Request, res: Response): Promise
   }
 });
 
-router.post('/login', authLimiter, async (req: Request, res: Response): Promise<void> => {
+router.post('/login', authLimiter, sanitizeBody, async (req: Request, res: Response): Promise<void> => {
   try {
     const parsedBody = loginSchema.safeParse(req.body);
     if (!parsedBody.success) {

@@ -73,7 +73,28 @@ export const initializeDatabase = async () => {
     )
   `);
 
-  // Create meeting participants table
+  // Create recordings table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS recordings (
+      id TEXT PRIMARY KEY,
+      meeting_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      egress_id TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'recording',
+      storage_provider TEXT NOT NULL DEFAULT 'cloudflare_r2',
+      storage_key TEXT NOT NULL,
+      upload_id TEXT,
+      parts_json TEXT DEFAULT '[]',
+      file_size INTEGER DEFAULT 0,
+      duration INTEGER DEFAULT 0,
+      mime_type TEXT,
+      started_at TEXT DEFAULT (datetime('now')),
+      ended_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
 
   // Add Performance Indices
   const indices = [
@@ -82,9 +103,33 @@ export const initializeDatabase = async () => {
     `CREATE INDEX IF NOT EXISTS idx_meetings_scheduled ON meetings(scheduled_for);`,
     `CREATE INDEX IF NOT EXISTS idx_meetings_active ON meetings(is_active, is_deleted);`,
     `CREATE INDEX IF NOT EXISTS idx_meeting_participants_user ON meeting_participants(user_id);`,
+    `CREATE INDEX IF NOT EXISTS idx_recordings_meeting ON recordings(meeting_id);`
   ];
   for (const q of indices) {
     await db.execute(q);
+  }
+
+  // Safe migrations for recordings table - add ALL columns that may not exist in older DBs
+  const recordingsMigrations = [
+    `ALTER TABLE recordings ADD COLUMN egress_id TEXT NOT NULL DEFAULT '';`,
+    `ALTER TABLE recordings ADD COLUMN status TEXT NOT NULL DEFAULT 'recording';`,
+    `ALTER TABLE recordings ADD COLUMN storage_provider TEXT NOT NULL DEFAULT 'cloudflare_r2';`,
+    `ALTER TABLE recordings ADD COLUMN storage_key TEXT NOT NULL DEFAULT '';`,
+    `ALTER TABLE recordings ADD COLUMN upload_id TEXT;`,
+    `ALTER TABLE recordings ADD COLUMN parts_json TEXT DEFAULT '[]';`,
+    `ALTER TABLE recordings ADD COLUMN file_size INTEGER DEFAULT 0;`,
+    `ALTER TABLE recordings ADD COLUMN duration INTEGER DEFAULT 0;`,
+    `ALTER TABLE recordings ADD COLUMN mime_type TEXT;`,
+    `ALTER TABLE recordings ADD COLUMN started_at TEXT DEFAULT (datetime('now'));`,
+    `ALTER TABLE recordings ADD COLUMN ended_at TEXT;`,
+    `ALTER TABLE recordings ADD COLUMN created_at TEXT DEFAULT (datetime('now'));`,
+  ];
+  for (const migration of recordingsMigrations) {
+    try {
+      await db.execute(migration);
+    } catch (e) {
+      // Column already exists — this is expected for existing databases
+    }
   }
 };
 
@@ -108,6 +153,30 @@ export interface Meeting {
   created_at: string;
   ended_at: string | null;
   scheduled_for: string | null;
+}
+
+export interface MeetingParticipant {
+  meeting_id: string;
+  user_id: string;
+  joined_at: string;
+}
+
+export interface Recording {
+  id: string;
+  meeting_id: string;
+  user_id: string;
+  egress_id: string;
+  status: 'recording' | 'processing' | 'saved' | 'failed';
+  storage_provider: string;
+  storage_key: string;
+  upload_id?: string;
+  parts_json: string;
+  file_size: number;
+  duration: number;
+  mime_type?: string;
+  started_at: string;
+  ended_at?: string;
+  created_at: string;
 }
 
 // User queries
@@ -195,6 +264,68 @@ export const meetingQueries = {
       args: [id, host_id]
     });
   },
+};
+
+export const recordingQueries = {
+  async createRecording(recording: Omit<Recording, 'created_at' | 'started_at' | 'file_size' | 'duration' | 'parts_json' | 'status'>) {
+    await db.execute({
+      sql: `INSERT INTO recordings (id, meeting_id, user_id, egress_id, storage_provider, storage_key, upload_id, mime_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [recording.id, recording.meeting_id, recording.user_id, recording.egress_id, recording.storage_provider, recording.storage_key, recording.upload_id || null, recording.mime_type || null],
+    });
+  },
+
+  async getRecordingById(id: string) {
+    const { rows } = await db.execute({ sql: `SELECT * FROM recordings WHERE id = ?`, args: [id] });
+    return rows.length > 0 ? (rows[0] as unknown as Recording) : null;
+  },
+
+  async getRecordingsByMeetingId(meetingId: string) {
+    const { rows } = await db.execute({ sql: `SELECT * FROM recordings WHERE meeting_id = ? ORDER BY created_at DESC`, args: [meetingId] });
+    return rows as unknown as Recording[];
+  },
+
+  async updateRecordingParts(id: string, partsJson: string) {
+    await db.execute({
+      sql: `UPDATE recordings SET parts_json = ? WHERE id = ?`,
+      args: [partsJson, id],
+    });
+  },
+
+  async finalizeRecording(id: string, status: Recording['status'], duration: number, fileSize: number) {
+    await db.execute({
+      sql: `UPDATE recordings SET status = ?, duration = ?, file_size = ?, ended_at = datetime('now') WHERE id = ?`,
+      args: [status, duration, fileSize, id],
+    });
+  },
+  
+  async getOngoingRecordingsForMeeting(meetingId: string) {
+    const { rows } = await db.execute({
+      sql: `SELECT * FROM recordings WHERE meeting_id = ? AND status = 'recording'`,
+      args: [meetingId],
+    });
+    return rows as unknown as Recording[];
+  },
+
+  async getRecordingsByUserId(userId: string) {
+    const { rows } = await db.execute({
+      sql: `SELECT r.*, m.title as meeting_title, m.room_code as meeting_room_code
+            FROM recordings r
+            JOIN meetings m ON r.meeting_id = m.id
+            WHERE r.user_id = ?
+            ORDER BY r.created_at DESC`,
+      args: [userId],
+    });
+    return rows as unknown as (Recording & { meeting_title: string; meeting_room_code: string })[];
+  },
+
+  async deleteRecording(id: string, userId: string) {
+    const result = await db.execute({
+      sql: `DELETE FROM recordings WHERE id = ? AND user_id = ?`,
+      args: [id, userId],
+    });
+    return result.rowsAffected > 0;
+  }
 };
 
 export default db;

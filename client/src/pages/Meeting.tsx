@@ -9,21 +9,15 @@ import {
   VideoTrack,
 } from '@livekit/components-react';
 import { LocalAudioTrack, RoomEvent, Track } from 'livekit-client';
-import { Disc, LogOut, Mic, MicOff, Palette, PhoneOff, Users, Video as VideoIcon, VideoOff } from 'lucide-react';
+import { Circle, StopCircle, Disc, LogOut, Mic, MicOff, Palette, PhoneOff, Users, Video as VideoIcon, VideoOff } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useMeetingRecorder } from '../hooks/useMeetingRecorder';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { getSocket, disconnectSocket } from '../services/socket';
-import { RoomOptions, VideoPresets } from 'livekit-client';
+import { clearSharedRoom, roomOptions } from '../services/livekitPrewarm';
 
-const roomOptions: RoomOptions = {
-  adaptiveStream: true,
-  dynacast: true,
-  videoCaptureDefaults: { resolution: VideoPresets.h720.resolution },
-  audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-  publishDefaults: { simulcast: true, red: true, dtx: false, videoEncoding: { maxBitrate: 2_000_000, maxFramerate: 60 }, audioPreset: { maxBitrate: 256_000 } }
-};
 import '../styles/meeting.css';
 
 const playSound = (type: 'record-start' | 'record-stop' | 'user-join' | 'user-leave') => {
@@ -104,7 +98,10 @@ export default function Meeting() {
 
   const isLeavingManually = useRef(false);
   const hasConnected = useRef(false);
+  const hasFetched = useRef(false);
 
+  const [initialIsRecording, setInitialIsRecording] = useState(false);
+  const [initialRecordingElapsed, setInitialRecordingElapsed] = useState(0);
   const [livekitToken, setLivekitToken] = useState<string>(location.state?.livekit?.token || '');
   const [livekitUrl, setLivekitUrl] = useState<string>(location.state?.livekit?.url || '');
   const [meetingTitle, setMeetingTitle] = useState(location.state?.meeting?.title || 'Music Class');
@@ -113,7 +110,6 @@ export default function Meeting() {
   const [connectionError, setConnectionError] = useState<string>('');
   const [theme, setTheme] = useState<'light' | 'maroon'>('light');
   const [isHost, setIsHost] = useState(!!location.state?.isHost);
-
 
   useEffect(() => {
     if (!roomCode) return;
@@ -124,7 +120,6 @@ export default function Meeting() {
 
     const onMeetingEnded = () => {
       if (isLeavingManually.current) return;
-
       navigate('/meeting-ended', { state: { roomCode } });
     };
 
@@ -133,11 +128,15 @@ export default function Meeting() {
     return () => {
       socket.off('meeting-ended', onMeetingEnded);
       socket.emit('leave-room', { roomCode, isHost });
+      clearSharedRoom();
     };
   }, [roomCode, isHost, navigate]);
 
   useEffect(() => {
     if (!location.state?.livekit && roomCode) {
+      if (hasFetched.current) return;
+      hasFetched.current = true;
+      
       const searchParams = new URLSearchParams(window.location.search);
       const botToken = searchParams.get('botToken');
       const lkUrl = searchParams.get('lkUrl');
@@ -160,10 +159,13 @@ export default function Meeting() {
         roomCode: code,
         displayName: user?.name,
       });
-      setLivekitToken(data.livekit.token);
-      setLivekitUrl(data.livekit.url);
-      setMeetingTitle(data.meeting?.title || 'Music Class');
-      setIsHost(!!data.isHost);
+      const d = data.data || data;
+      setLivekitToken(d.livekit.token);
+      setLivekitUrl(d.livekit.url);
+      setMeetingTitle(d.meeting?.title || 'Music Class');
+      setIsHost(!!d.isHost);
+      setInitialIsRecording(!!d.meeting?.isRecording);
+      setInitialRecordingElapsed(d.meeting?.recordingElapsed || 0);
       setIsConnecting(false);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to join meeting');
@@ -255,6 +257,8 @@ export default function Meeting() {
             theme={theme}
             onToggleTheme={() => setTheme(t => t === 'light' ? 'maroon' : 'light')}
             joinStartTime={location.state?.joinStartTime}
+            initialIsRecording={initialIsRecording}
+            initialRecordingElapsed={initialRecordingElapsed}
           />
           <RoomAudioRenderer />
         </LiveKitRoom>
@@ -280,7 +284,9 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
   clearConnectionError,
   theme,
   onToggleTheme,
-  joinStartTime
+  joinStartTime,
+  initialIsRecording = false,
+  initialRecordingElapsed = 0
 }: {
   roomCode: string;
   meetingTitle: string;
@@ -292,6 +298,8 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
   theme: 'light' | 'maroon';
   onToggleTheme: () => void;
   joinStartTime?: number;
+  initialIsRecording?: boolean;
+  initialRecordingElapsed?: number;
 }) {
   const room = useRoomContext();
   const connectionState = useConnectionState();
@@ -300,6 +308,78 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
   const [elapsed, setElapsed] = useState(0);
   const [showParticipants, setShowParticipants] = useState(false);
   const [musicMode, setMusicMode] = useState(false);
+
+  const [isGlobalRecording, setIsGlobalRecording] = useState(initialIsRecording);
+  const [recordingElapsed, setRecordingElapsed] = useState(initialRecordingElapsed);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  const showToast = useCallback((message: string, type: 'success' | 'info' | 'error' = 'info') => {
+    setToast({ message, type });
+    const timer = setTimeout(() => {
+      setToast(current => current?.message === message ? null : current);
+    }, 4000);
+  }, []);
+
+  const recorder = useMeetingRecorder(roomCode, isHost);
+
+  useEffect(() => {
+    setIsGlobalRecording(initialIsRecording);
+    setRecordingElapsed(initialRecordingElapsed);
+  }, [initialIsRecording, initialRecordingElapsed]);
+
+  // Only sync initial state: if you join a room that's already recording, set the recorder to match.
+  // Do NOT re-sync during active transitions (saving, starting) — that creates a feedback loop.
+  useEffect(() => {
+    if (isGlobalRecording && isHost && recorder.status === 'idle') {
+      recorder.setStatus('recording');
+    }
+    // Note: we intentionally do NOT reset recorder to idle when isGlobalRecording becomes false,
+    // because the stopRecording() call already handles that transition.
+  }, [isGlobalRecording, isHost]);  // removed recorder.status from deps to avoid loop
+
+  useEffect(() => {
+    if (recorder.error) {
+      showToast(recorder.error, 'error');
+    }
+  }, [recorder.error, showToast]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    const handleRecStart = () => {
+      setIsGlobalRecording(true);
+      if (recorder.status === 'idle') recorder.setStatus('recording');
+      showToast('Recording started', 'success');
+      import('../utils/audio').then(m => m.playRecordingSound());
+    };
+    const handleRecStop = () => {
+      setIsGlobalRecording(false);
+      setRecordingElapsed(0);
+      if (recorder.status === 'recording' || recorder.status === 'saving') {
+        recorder.setStatus('idle');
+      }
+      showToast('Recording stopped', 'info');
+      import('../utils/audio').then(m => m.playRecordingSound());
+    };
+    
+    socket.on('recording:started', handleRecStart);
+    socket.on('recording:stopped', handleRecStop);
+    
+    return () => {
+      socket.off('recording:started', handleRecStart);
+      socket.off('recording:stopped', handleRecStop);
+    };
+  }, [showToast, recorder.status, recorder.setStatus]);
+
+  useEffect(() => {
+    if (!isGlobalRecording) {
+      setRecordingElapsed(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setRecordingElapsed(prev => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isGlobalRecording]);
 
   useEffect(() => {
     if (!room) return;
@@ -332,6 +412,7 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
   }, [connectionState]);
 
   const [confirmAction, setConfirmAction] = useState<'leave' | 'end' | null>(null);
+  const [isSavingOnLeave, setIsSavingOnLeave] = useState(false);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
   const [optimisticMic, setOptimisticMic] = useState<boolean | null>(null);
@@ -395,13 +476,17 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
   const toggleMusicMode = useCallback(async () => {
     const nextMode = !musicMode;
     setMusicMode(nextMode);
-    if (displayMic) {
-      await localParticipant.setMicrophoneEnabled(false);
-      await localParticipant.setMicrophoneEnabled(true, {
-        echoCancellation: !nextMode,
-        noiseSuppression: !nextMode,
-        autoGainControl: !nextMode,
-      });
+    try {
+      await localParticipant.setMicrophoneEnabled(
+        displayMic,
+        {
+          echoCancellation: !nextMode,
+          noiseSuppression: !nextMode,
+          autoGainControl: !nextMode,
+        }
+      );
+    } catch {
+      setMusicMode(!nextMode);
     }
   }, [musicMode, displayMic, localParticipant]);
 
@@ -445,9 +530,16 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
         </div>
       )}
 
-      <div className="meeting-room__header">
+      <header className="meeting-room__header">
         <div className="meeting-room__header-left">
-          <span className="meeting-room__title">{meetingTitle}</span>
+          <div className="meeting-room__title-container" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <h1 className="meeting-room__title">{meetingTitle}</h1>
+            {isGlobalRecording && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', padding: '4px 12px', borderRadius: '12px', fontSize: '0.85rem', fontWeight: 600, animation: 'pulse 2s infinite' }}>
+                <Circle fill="currentColor" size={10} className="pulse-icon" /> Recording &bull; {formatTime(recordingElapsed)}
+              </div>
+            )}
+          </div>
           <span className="meeting-room__code">{roomCode}</span>
           <span style={{
             fontSize: '0.7rem',
@@ -481,7 +573,7 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
             <Users size={16} /> {participants.length}
           </button>
         </div>
-      </div>
+      </header>
 
       <div className="meeting-room__content">
         {connectionState === 'connecting' || connectionState === 'reconnecting' ? (
@@ -543,7 +635,7 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
       <div className="meeting-room__controls-wrapper">
         <div className="meeting-room__controls">
           <button
-            className={`control-btn ${displayMic ? 'control-btn--default' : 'control-btn--off'}`}
+            className={`control-btn ${displayMic ? 'control-btn--active-green' : 'control-btn--off'}`}
             onClick={toggleMic}
           >
             {displayMic ? <Mic size={22} /> : <MicOff size={22} />}
@@ -551,7 +643,7 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
           </button>
 
           <button
-            className={`control-btn ${displayCam ? 'control-btn--default' : 'control-btn--off'}`}
+            className={`control-btn ${displayCam ? 'control-btn--active-blue' : 'control-btn--off'}`}
             onClick={toggleCam}
           >
             {displayCam ? <VideoIcon size={22} /> : <VideoOff size={22} />}
@@ -559,27 +651,47 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
           </button>
 
           <button
-            className={`control-btn ${musicMode ? 'control-btn--active' : 'control-btn--default'}`}
+            className={`control-btn ${musicMode ? 'control-btn--active-orange' : 'control-btn--yellow'}`}
             onClick={toggleMusicMode}
-            style={musicMode ? { background: '#D97706', color: 'white', borderColor: '#D97706' } : {}}
           >
             <span style={{ fontSize: '1.2rem' }}>🎵</span>
             <span className="control-btn__tooltip">{musicMode ? 'Music Mode ON (Zero Latency)' : 'Music Mode OFF (Noise Suppressed)'}</span>
           </button>
 
-          <button className={`control-btn ${showParticipants ? 'control-btn--active' : 'control-btn--default'}`} onClick={() => setShowParticipants(!showParticipants)}>
+          <button className={`control-btn ${showParticipants ? 'control-btn--active' : 'control-btn--indigo'}`} onClick={() => setShowParticipants(!showParticipants)}>
             <Users size={22} />
             <span className="control-btn__tooltip">Participants</span>
           </button>
 
           <button
-            className="control-btn control-btn--default"
+            className="control-btn control-btn--gray"
             onClick={() => setConfirmAction('leave')}
           >
             <LogOut size={22} />
             <span className="control-btn__tooltip">Leave</span>
           </button>
 
+
+          {isHost && (
+            <button 
+              className={`control-btn control-btn--active-red ${recorder.status === 'recording' ? 'control-btn--recording' : ''}`}
+              onClick={() => {
+                if (recorder.status === 'recording') {
+                  recorder.stopRecording();
+                } else {
+                  recorder.startRecording();
+                }
+              }}
+              disabled={recorder.status === 'starting' || recorder.status === 'saving'}
+            >
+              {recorder.status === 'starting' ? <span className="loader" style={{width: 20, height: 20, borderWidth: 2}}></span> :
+               recorder.status === 'recording' ? <StopCircle size={22} className="pulse-icon" /> : 
+               recorder.status === 'saving' ? <span className="loader" style={{width: 20, height: 20, borderWidth: 2}}></span> : <Circle size={22} />}
+              <span className="control-btn__tooltip">
+                {recorder.status === 'recording' ? 'Stop Recording' : 'Start Recording'}
+              </span>
+            </button>
+          )}
 
           {isHost && (
             <button className="control-btn control-btn--end" onClick={() => setConfirmAction('end')}>
@@ -607,20 +719,24 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
             </h3>
             <p style={{ color: '#4B5563', marginBottom: '24px', fontSize: '0.95rem', lineHeight: 1.4 }}>
               {confirmAction === 'end'
-                ? 'Are you sure you want to completely end this meeting and disconnect all participants?'
+                ? `Are you sure you want to end this meeting for all ${participants.length} participants? This cannot be undone.`
                 : 'Are you sure you want to leave this meeting? You can rejoin later.'}
             </p>
             <div style={{ display: 'flex', gap: '12px' }}>
               <button
                 onClick={() => setConfirmAction(null)}
+                autoFocus
                 style={{ flex: 1, padding: '10px', background: '#F3F4F6', color: '#374151', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}
-                onMouseOver={(e) => e.currentTarget.style.background = '#E5E7EB'}
-                onMouseOut={(e) => e.currentTarget.style.background = '#F3F4F6'}
               >
                 Cancel
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
+                  if (isSavingOnLeave) return;
+                  if (recorder.status === 'recording' || recorder.status === 'starting') {
+                    setIsSavingOnLeave(true);
+                    await recorder.stopRecording();
+                  }
                   room.disconnect();
                   if (confirmAction === 'end') {
                     if (onEnd) onEnd();
@@ -628,15 +744,46 @@ const BrandedMeetingUI = React.memo(function BrandedMeetingUI({
                     onLeave();
                   }
                   setConfirmAction(null);
+                  setIsSavingOnLeave(false);
                 }}
-                style={{ flex: 1, padding: '10px', background: '#DC2626', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}
-                onMouseOver={(e) => e.currentTarget.style.background = '#B91C1C'}
-                onMouseOut={(e) => e.currentTarget.style.background = '#DC2626'}
+                disabled={isSavingOnLeave}
+                style={{ flex: 1, padding: '10px', background: isSavingOnLeave ? '#9CA3AF' : '#DC2626', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: isSavingOnLeave ? 'not-allowed' : 'pointer', transition: 'background 0.2s', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}
               >
-                {confirmAction === 'end' ? 'End Call' : 'Leave'}
+                {isSavingOnLeave ? (
+                  <>
+                    <span className="loader" style={{ width: 16, height: 16, borderWidth: 2 }}></span>
+                    Saving...
+                  </>
+                ) : (
+                  confirmAction === 'end' ? 'End for All' : 'Leave'
+                )}
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {toast && (
+        <div className={`toast-notification toast-notification--${toast.type}`} style={{
+          position: 'fixed',
+          top: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 10000,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '12px 24px',
+          borderRadius: '30px',
+          color: 'white',
+          fontWeight: 600,
+          fontSize: '0.95rem',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+          backdropFilter: 'blur(8px)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          animation: 'slideDown 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards'
+        }}>
+          {toast.type === 'success' ? '🟢' : toast.type === 'error' ? '🔴' : '🔵'} {toast.message}
         </div>
       )}
 

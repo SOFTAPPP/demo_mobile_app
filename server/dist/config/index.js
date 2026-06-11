@@ -6,17 +6,28 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.config = void 0;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
-const requiredInProduction = ['JWT_SECRET', 'LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'TURSO_DATABASE_URL'];
-if (process.env.NODE_ENV === 'production') {
-    const missing = requiredInProduction.filter(key => !process.env[key]);
-    if (missing.length > 0) {
-        console.warn(`[Config] Missing env vars in production: ${missing.join(', ')}`);
+const isProduction = process.env.NODE_ENV === 'production';
+const requiredEnvs = [
+    'JWT_SECRET',
+    'JWT_REFRESH_SECRET',
+    'LIVEKIT_URL',
+    'LIVEKIT_API_KEY',
+    'LIVEKIT_API_SECRET',
+    'TURSO_DATABASE_URL',
+    'TURSO_AUTH_TOKEN',
+];
+for (const key of requiredEnvs) {
+    if (!process.env[key]) {
+        if (isProduction) {
+            throw new Error(`[Config] Missing required env var: ${key}. Server cannot start in production.`);
+        }
+        console.warn(`[Config] Missing env var: ${key}. Running in demo/dev mode.`);
     }
 }
 exports.config = {
     port: parseInt(process.env.PORT || '3001', 10),
-    jwtSecret: process.env.JWT_SECRET || 'sangeet-arghya-demo-secret',
-    jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || 'sangeet-arghya-demo-refresh-secret',
+    jwtSecret: process.env.JWT_SECRET,
+    jwtRefreshSecret: process.env.JWT_REFRESH_SECRET,
     jwtExpiresIn: '24h',
     jwtRefreshExpiresIn: '7d',
     livekit: {
@@ -30,8 +41,9 @@ exports.config = {
         'http://localhost:3000',
         'http://localhost',
         'capacitor://localhost',
-        process.env.CLIENT_URL || ''
+        process.env.CLIENT_URL || '',
     ].filter(Boolean),
-    isProduction: process.env.NODE_ENV === 'production',
+    isProduction,
+    isLocalhost: !isProduction,
 };
 //# sourceMappingURL=index.js.map

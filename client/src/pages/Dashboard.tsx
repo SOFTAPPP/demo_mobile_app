@@ -1,8 +1,9 @@
 import { Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { useOfflineDetector } from '../hooks/useOfflineDetector';
 
 import { getSocket, disconnectSocket } from '../services/socket';
 import '../styles/dashboard.css';
@@ -48,6 +49,8 @@ function LiveClock() {
 export default function Dashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const isTeacher = user?.role === 'teacher';
+  const isOffline = useOfflineDetector();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [roomCode, setRoomCode] = useState('');
@@ -64,16 +67,17 @@ export default function Dashboard() {
   const [meetingToDelete, setMeetingToDelete] = useState<string | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const [currentTime, setCurrentTime] = useState(Date.now());
+  const [fetchError, setFetchError] = useState(false);
+  const [recordings, setRecordings] = useState<any[]>([]);
+  const [showRecordings, setShowRecordings] = useState(false);
+  const [recordingToDelete, setRecordingToDelete] = useState<string | null>(null);
 
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
+    const timer = setInterval(() => setSidebarOpen(s => s), 0);
     return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
-    // Background prefetch for heavy Meeting component
-    // This fixes the ~10s delay when clicking join/create
     const prefetchTimer = setTimeout(() => {
       import('./Meeting').catch(() => {});
     }, 1500);
@@ -103,18 +107,56 @@ export default function Dashboard() {
 
   const fetchMeetings = useCallback(async () => {
     try {
+      setFetchError(false);
       const [recentRes, scheduledRes] = await Promise.all([
         api.get('/meetings/recent'),
         api.get('/meetings/scheduled')
       ]);
-      setRecentMeetings(recentRes.data.meetings || []);
-      setScheduledMeetings(scheduledRes.data.meetings || []);
-    } catch {}
+      setRecentMeetings(recentRes.data.data?.meetings || recentRes.data.meetings || []);
+      setScheduledMeetings(scheduledRes.data.data?.meetings || scheduledRes.data.meetings || []);
+    } catch {
+      setFetchError(true);
+    }
+  }, []);
+
+  const fetchRecordings = useCallback(async () => {
+    try {
+      const { data } = await api.get('/recordings/my');
+      setRecordings(data.data?.recordings || data.recordings || []);
+    } catch (err) {
+      console.error('Failed to fetch recordings:', err);
+    }
   }, []);
 
   useEffect(() => {
     fetchMeetings();
   }, [fetchMeetings]);
+
+  const confirmDeleteRecording = async () => {
+    if (!recordingToDelete) return;
+    try {
+      await api.delete(`/recordings/${recordingToDelete}`);
+      setRecordings(prev => prev.filter(r => r.id !== recordingToDelete));
+    } catch {}
+    setRecordingToDelete(null);
+  };
+
+  useEffect(() => {
+    if (showCreateModal && isTeacher) {
+      createPrefetchRef.current = api.post('/meetings/create', { title: 'Music Class' }).catch(() => null);
+    } else if (!showCreateModal) {
+      createPrefetchRef.current = null;
+    }
+  }, [showCreateModal, isTeacher]);
+
+  useEffect(() => {
+    const code = roomCode.trim().toUpperCase();
+    if (code.length === 6) {
+      joinPrefetchRef.current = api.post('/meetings/join', { roomCode: code, displayName: user?.name }).catch(() => null);
+    } else if (code.length < 6) {
+      joinPrefetchRef.current = null;
+    }
+  }, [roomCode, user?.name]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -132,22 +174,23 @@ export default function Dashboard() {
     });
   };
 
+  const createPrefetchRef = useRef<Promise<any> | null>(null);
+  const joinPrefetchRef = useRef<Promise<any> | null>(null);
+
   const handleCreateMeeting = async () => {
     setIsCreating(true);
     setAlertMessage('');
-
     try {
       import('./Meeting');
-
-      const { data } = await api.post('/meetings/create', {
-        title: meetingTitle.trim() || 'Music Class',
-      });
-
-
-      navigate(`/meeting/${data.meeting.room_code}`, {
+      const data = createPrefetchRef.current
+        ? (await createPrefetchRef.current).data
+        : (await api.post('/meetings/create', { title: meetingTitle.trim() || 'Music Class' })).data;
+      createPrefetchRef.current = null;
+      const d = data.data || data;
+      navigate(`/meeting/${d.meeting.room_code}`, {
         state: {
-          meeting: data.meeting,
-          livekit: data.livekit,
+          meeting: d.meeting,
+          livekit: d.livekit,
           isHost: true,
           joinStartTime: performance.now(),
         },
@@ -164,24 +207,20 @@ export default function Dashboard() {
       setJoinError('Please enter a room code');
       return;
     }
-
     setIsJoining(true);
     setJoinError('');
-
     try {
       import('./Meeting');
-
-      const { data } = await api.post('/meetings/join', {
-        roomCode: roomCode.trim().toUpperCase(),
-        displayName: user?.name,
-      });
-
-
-      navigate(`/meeting/${data.meeting.room_code}`, {
+      const data = joinPrefetchRef.current
+        ? (await joinPrefetchRef.current).data
+        : (await api.post('/meetings/join', { roomCode: roomCode.trim().toUpperCase(), displayName: user?.name })).data;
+      joinPrefetchRef.current = null;
+      const d = data.data || data;
+      navigate(`/meeting/${d.meeting.room_code}`, {
         state: {
-          meeting: data.meeting,
-          livekit: data.livekit,
-          isHost: !!data.isHost,
+          meeting: d.meeting,
+          livekit: d.livekit,
+          isHost: !!d.isHost,
           joinStartTime: performance.now(),
         },
       });
@@ -206,7 +245,8 @@ export default function Dashboard() {
         title: meetingTitle.trim() || 'Scheduled Music Class',
         scheduledFor,
       });
-      setScheduledMeetings((prev) => [...prev, data.meeting].sort((a, b) => new Date(a.scheduled_for!).getTime() - new Date(b.scheduled_for!).getTime()));
+      const meeting = data.data?.meeting || data.meeting;
+      setScheduledMeetings((prev) => [...prev, meeting].sort((a, b) => new Date(a.scheduled_for!).getTime() - new Date(b.scheduled_for!).getTime()));
       setShowScheduleModal(false);
       setMeetingTitle('');
       setScheduleDate('');
@@ -223,18 +263,16 @@ export default function Dashboard() {
     setAlertMessage('');
     try {
       import('./Meeting');
-
       const { data } = await api.post('/meetings/join', {
         roomCode: code,
         displayName: user?.name,
       });
-
-
-      navigate(`/meeting/${data.meeting.room_code}`, {
+      const d = data.data || data;
+      navigate(`/meeting/${d.meeting.room_code}`, {
         state: {
-          meeting: data.meeting,
-          livekit: data.livekit,
-          isHost: !!data.isHost,
+          meeting: d.meeting,
+          livekit: d.livekit,
+          isHost: !!d.isHost,
           joinStartTime: performance.now(),
         },
       });
@@ -277,24 +315,41 @@ export default function Dashboard() {
     ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     : '?';
 
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const hasActive = recentMeetings.some(m => !m.ended_at);
+    if (hasActive) {
+      const timer = setInterval(() => setNow(Date.now()), 1000);
+      return () => clearInterval(timer);
+    }
+  }, [recentMeetings]);
+
   const learningStats = useMemo(() => {
-    let totalMinutes = 0;
+    let totalSeconds = 0;
     recentMeetings.forEach(m => {
       if (m.created_at) {
         const start = new Date(m.created_at).getTime();
-        const end = m.ended_at ? new Date(m.ended_at).getTime() : Date.now();
-        const diffMins = (end - start) / (1000 * 60);
-        if (diffMins > 0) totalMinutes += diffMins;
+        const end = m.ended_at ? new Date(m.ended_at).getTime() : now;
+        const diffSecs = (end - start) / 1000;
+        if (diffSecs > 0) totalSeconds += diffSecs;
       }
     });
 
-    if (totalMinutes < 1) return { value: 0, label: 'Minutes of Learning' };
-    if (totalMinutes < 60) return { value: Math.floor(totalMinutes), label: 'Minutes of Learning' };
+    if (totalSeconds < 60) {
+      return { value: `${Math.floor(totalSeconds)}s`, label: 'Total Learning Time' };
+    }
+    
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    if (totalMinutes < 60) {
+      return { value: `${totalMinutes}m`, label: 'Total Learning Time' };
+    }
+    
     const hours = Math.floor(totalMinutes / 60);
-    const mins = Math.floor(totalMinutes % 60);
-    if (mins === 0) return { value: hours, label: hours === 1 ? 'Hour of Learning' : 'Hours of Learning' };
+    const mins = totalMinutes % 60;
+    if (mins === 0) return { value: `${hours}h`, label: 'Total Learning Time' };
     return { value: `${hours}h ${mins}m`, label: 'Total Learning Time' };
-  }, [recentMeetings]);
+  }, [recentMeetings, now]);
 
   const activeCount = useMemo(() => recentMeetings.filter(m => m.is_active).length, [recentMeetings]);
 
@@ -330,17 +385,25 @@ export default function Dashboard() {
             <span className="sidebar__nav-icon">🏠</span>
             Dashboard
           </div>
-          <div className="sidebar__nav-item" onClick={() => setShowCreateModal(true)}>
-            <span className="sidebar__nav-icon">📹</span>
-            New Meeting
-          </div>
+          {isTeacher && (
+            <div className="sidebar__nav-item" onClick={() => setShowCreateModal(true)}>
+              <span className="sidebar__nav-icon">📹</span>
+              New Meeting
+            </div>
+          )}
           <div className="sidebar__nav-item" onClick={() => setShowJoinModal(true)}>
             <span className="sidebar__nav-icon">🔗</span>
             Join Meeting
           </div>
-          <div className="sidebar__nav-item" onClick={() => setShowScheduleModal(true)}>
-            <span className="sidebar__nav-icon">📅</span>
-            Schedule
+          {isTeacher && (
+            <div className="sidebar__nav-item" onClick={() => setShowScheduleModal(true)}>
+              <span className="sidebar__nav-icon">📅</span>
+              Schedule
+            </div>
+          )}
+          <div className="sidebar__nav-item" onClick={() => { setShowRecordings(true); fetchRecordings(); setSidebarOpen(false); }}>
+            <span className="sidebar__nav-icon">📼</span>
+            Recordings
           </div>
           <div className="sidebar__nav-item">
             <span className="sidebar__nav-icon">📊</span>
@@ -388,18 +451,53 @@ export default function Dashboard() {
           <LiveClock />
         </header>
 
-        <div className="quick-actions">
-          <button
-            className="quick-action-card quick-action-card--create"
-            onClick={() => setShowCreateModal(true)}
-            id="create-meeting-btn"
-          >
-            <span className="quick-action-card__bg-icon">📹</span>
-            <span className="quick-action-card__icon">🎥</span>
-            <span className="quick-action-card__title">New Meeting</span>
-            <span className="quick-action-card__desc">Start a new music class instantly</span>
-          </button>
+        {isOffline && (
+          <div style={{
+            background: '#B45309',
+            color: 'white',
+            padding: '10px 20px',
+            borderRadius: '8px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontWeight: 600,
+          }}>
+            ⚠️ You are offline. Some features may be unavailable.
+          </div>
+        )}
 
+        {fetchError && (
+          <div style={{
+            background: '#FEF2F2',
+            border: '1px solid #FECACA',
+            color: '#991B1B',
+            padding: '12px 20px',
+            borderRadius: '8px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}>
+            <span>Failed to load meetings. Please check your connection.</span>
+            <button
+              onClick={fetchMeetings}
+              style={{
+                padding: '6px 16px',
+                background: '#DC2626',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        <div className="quick-actions">
           <button
             className="quick-action-card quick-action-card--join"
             onClick={() => setShowJoinModal(true)}
@@ -411,13 +509,34 @@ export default function Dashboard() {
             <span className="quick-action-card__desc">Enter a room code to join a class</span>
           </button>
 
-          <button className="quick-action-card quick-action-card--schedule" id="schedule-btn" onClick={() => setShowScheduleModal(true)}>
-            <span className="quick-action-card__bg-icon">📅</span>
-            <span className="quick-action-card__icon">📆</span>
-            <span className="quick-action-card__title">Schedule</span>
-            <span className="quick-action-card__desc">Plan your upcoming classes</span>
-          </button>
+          {isTeacher && (
+            <button
+              className="quick-action-card quick-action-card--create"
+              onClick={() => setShowCreateModal(true)}
+              id="create-meeting-btn"
+            >
+              <span className="quick-action-card__bg-icon">📹</span>
+              <span className="quick-action-card__icon">🎥</span>
+              <span className="quick-action-card__title">New Meeting</span>
+              <span className="quick-action-card__desc">Start a new music class instantly</span>
+            </button>
+          )}
 
+          {isTeacher && (
+            <button className="quick-action-card quick-action-card--schedule" id="schedule-btn" onClick={() => setShowScheduleModal(true)}>
+              <span className="quick-action-card__bg-icon">📅</span>
+              <span className="quick-action-card__icon">📆</span>
+              <span className="quick-action-card__title">Schedule</span>
+              <span className="quick-action-card__desc">Plan your upcoming classes</span>
+            </button>
+          )}
+
+          <button className="quick-action-card quick-action-card--recordings" id="recordings-btn" onClick={() => { setShowRecordings(true); fetchRecordings(); }}>
+            <span className="quick-action-card__bg-icon">📼</span>
+            <span className="quick-action-card__icon">▶️</span>
+            <span className="quick-action-card__title">Recordings</span>
+            <span className="quick-action-card__desc">Watch your past class recordings</span>
+          </button>
         </div>
 
         <div className="stats-grid">
@@ -470,12 +589,12 @@ export default function Dashboard() {
                       flex: '0 0 auto',
                       width: 'auto',
                       minWidth: '120px',
-                      opacity: new Date(meeting.scheduled_for!).getTime() <= currentTime ? 1 : 0.5,
-                      cursor: new Date(meeting.scheduled_for!).getTime() <= currentTime ? 'pointer' : 'not-allowed'
+                      opacity: new Date(meeting.scheduled_for!).getTime() <= Date.now() ? 1 : 0.5,
+                      cursor: new Date(meeting.scheduled_for!).getTime() <= Date.now() ? 'pointer' : 'not-allowed'
                     }}
                     onClick={() => startScheduledMeeting(meeting.room_code)}
-                    disabled={new Date(meeting.scheduled_for!).getTime() > currentTime || isJoining}
-                    title={new Date(meeting.scheduled_for!).getTime() > currentTime ? "You can start the class once the scheduled time arrives" : ""}
+                    disabled={new Date(meeting.scheduled_for!).getTime() > Date.now() || isJoining}
+                    title={new Date(meeting.scheduled_for!).getTime() > Date.now() ? "You can start the class once the scheduled time arrives" : ""}
                   >
                     {isJoining ? 'Starting...' : '▶ Start Class'}
                   </button>
@@ -530,6 +649,27 @@ export default function Dashboard() {
             ))
           )}
         </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', marginTop: '32px' }}>
+          <h2 className="section-title" style={{ marginBottom: 0 }}>📼 My Recordings</h2>
+          <button
+            onClick={() => { setShowRecordings(!showRecordings); if (!showRecordings) fetchRecordings(); }}
+            style={{
+              padding: '8px 20px',
+              background: 'var(--m-text, #1A1A1A)',
+              color: 'var(--m-card, #FFFFFF)',
+              border: 'none',
+              borderRadius: '8px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontSize: '0.85rem',
+            }}
+          >
+            {showRecordings ? 'Hide' : `View (${recordings.length})`}
+          </button>
+        </div>
+
+
       </main>
 
       {showJoinModal && (
@@ -712,6 +852,92 @@ export default function Dashboard() {
         </div>
       )}
 
+      {recordingToDelete && (
+        <div className="modal-overlay" onClick={() => setRecordingToDelete(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal__title">Delete Recording</h3>
+            <p className="modal__subtitle">Are you sure you want to permanently delete this recording? This action cannot be undone.</p>
+            <div className="modal__actions">
+              <button
+                className="btn-modal-secondary"
+                onClick={() => setRecordingToDelete(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-modal-primary"
+                style={{ background: '#E53E3E', color: 'white', borderColor: '#E53E3E' }}
+                onClick={confirmDeleteRecording}
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRecordings && (
+        <div className="modal-overlay" onClick={() => setShowRecordings(false)}>
+          <div className="modal" style={{ maxWidth: '600px' }} onClick={e => e.stopPropagation()}>
+            <h2 className="modal__title">Your Recordings</h2>
+            <p className="modal__subtitle">View and download past class recordings</p>
+
+            <div className="meetings-list" style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '10px' }}>
+              {recordings.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-state__icon">📼</div>
+                  <p className="empty-state__text">No recordings available yet.</p>
+                </div>
+              ) : (
+                recordings.map((rec) => (
+                  <div key={rec.id} className="meeting-item">
+                    <div className="meeting-item__icon" style={{ background: '#EEF2FF', color: '#4F46E5' }}>📼</div>
+                    <div className="meeting-item__info">
+                      <div className="meeting-item__title">{rec.meetingTitle || 'Music Class'}</div>
+                      <div className="meeting-item__meta" style={{ display: 'flex', gap: '12px' }}>
+                        <span>{new Date(rec.createdAt).toLocaleDateString()}</span>
+                        {rec.duration > 0 && <span>{Math.floor(rec.duration / 60)}m {rec.duration % 60}s</span>}
+                        {rec.fileSize > 0 && <span>{(rec.fileSize / (1024 * 1024)).toFixed(1)} MB</span>}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {rec.status === 'saved' && rec.downloadUrl ? (
+                        <>
+                          <a href={rec.downloadUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ textDecoration: 'none' }}>
+                            <button className="btn-modal-primary" style={{ padding: '6px 12px', fontSize: '12px', width: 'auto', background: '#2563EB', borderColor: '#2563EB' }}>
+                              ▶ Watch
+                            </button>
+                          </a>
+                          <a href={rec.downloadUrl} download target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+                            <button className="btn-modal-primary" style={{ padding: '6px 12px', fontSize: '12px', width: 'auto' }}>
+                              Download
+                            </button>
+                          </a>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: '12px', color: '#6B7280', padding: '6px 12px' }}>
+                          {rec.status === 'failed' ? 'Failed' : 'Processing...'}
+                        </span>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setRecordingToDelete(rec.id); }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem' }}
+                        title="Delete Recording"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="modal__actions" style={{ marginTop: '24px' }}>
+              <button className="btn-modal-secondary" onClick={() => setShowRecordings(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showLogoutConfirm && (
         <div className="modal-overlay" onClick={() => setShowLogoutConfirm(false)}>
