@@ -27,3 +27,17 @@ allprojects {
 task clean(type: Delete) {
     delete rootProject.buildDir
 }
+
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            project.android {
+                java {
+                    toolchain {
+                        languageVersion = JavaLanguageVersion.of(21)
+                    }
+                }
+            }
+        }
+    }
+}
